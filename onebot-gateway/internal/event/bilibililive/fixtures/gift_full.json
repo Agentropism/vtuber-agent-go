@@ -1,0 +1,39 @@
+{
+  "cmd": "LIVE_OPEN_PLATFORM_SEND_GIFT",
+  "data": {
+    "room_id": 123456,
+    "uid": 0,
+    "open_id": "open_id_2",
+    "union_id": "union_id_2",
+    "uname": "送礼用户",
+    "uface": "https://example.com/face2.png",
+    "gift_id": 30607,
+    "gift_name": "火箭",
+    "gift_num": 1,
+    "price": 500000,
+    "r_price": 500000,
+    "paid": true,
+    "fans_medal_level": 10,
+    "fans_medal_name": "奖牌",
+    "fans_medal_wearing_status": true,
+    "guard_level": 0,
+    "timestamp": 1785800002,
+    "anchor_info": {
+      "uid": 0,
+      "open_id": "anchor_open_id",
+      "union_id": "",
+      "uname": "主播",
+      "uface": "https://example.com/anchor.png"
+    },
+    "msg_id": "msg_003",
+    "gift_icon": "https://example.com/icon.png",
+    "combo_gift": false,
+    "combo_info": {
+      "combo_base_num": 1,
+      "combo_count": 1,
+      "combo_id": "combo_1",
+      "combo_timeout": 60
+    },
+    "blind_gift": {"blind_gift_id": 0, "status": false}
+  }
+}

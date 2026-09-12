@@ -1,0 +1,20 @@
+[server]
+addr = ":6199"
+
+[log]
+level = "debug"
+
+[memory]
+target = "ws://127.0.0.1:12393/proxy-ws"
+# 记忆服务下行 Action 的目标客户端平台
+callback_platform = "qq"
+
+[[clients]]
+platform = "qq"
+adapter_key = "onebot_v11"
+path = "/"
+
+[[clients]]
+platform = "bilibili"
+adapter_key = "bilibili_live"
+path = "/bilibili"

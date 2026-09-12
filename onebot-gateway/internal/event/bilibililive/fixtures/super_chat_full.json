@@ -1,0 +1,22 @@
+{
+  "cmd": "LIVE_OPEN_PLATFORM_SUPER_CHAT",
+  "data": {
+    "room_id": 123456,
+    "uid": 0,
+    "open_id": "open_id_3",
+    "union_id": "union_id_3",
+    "uname": "SC用户",
+    "uface": "https://example.com/face3.png",
+    "message_id": 9001,
+    "message": "主播加油！",
+    "msg_id": "msg_004",
+    "rmb": 30,
+    "timestamp": 1785800003,
+    "start_time": 1785800003,
+    "end_time": 1785800063,
+    "guard_level": 0,
+    "fans_medal_level": 0,
+    "fans_medal_name": "",
+    "fans_medal_wearing_status": false
+  }
+}

@@ -1,0 +1,32 @@
+[server]
+addr = ":8080"
+
+[log]
+level = "info"
+
+[memory]
+target = "ws://127.0.0.1:12393/proxy-ws"
+# 记忆服务下行 Action 的目标客户端平台
+callback_platform = "qq"
+# 上传缓存容量（默认 256，0 也按 256 处理）
+queue_size = 256
+# 缓存满时的等待上限，0 = 无限等待（背压）；例如 "10s"
+queue_wait_timeout = "0s"
+# 敏感词库文件路径（UTF-8，每行一个词，# 开头为注释）；为空则不启用过滤
+sensitive_words_file = ""
+# 消息去重窗口，例如 "600s"；0 = 不启用
+dedup_ttl = "600s"
+
+[bilibili]
+# 礼物、醒目留言和大航海事件的语音反馈端点；空字符串表示禁用
+distillery_target = "http://127.0.0.1:9528/event"
+
+[[clients]]
+platform = "qq"
+adapter_key = "onebot_v11"
+path = "/qq"
+
+[[clients]]
+platform = "bilibili"
+adapter_key = "bilibili_live"
+path = "/bilibili"

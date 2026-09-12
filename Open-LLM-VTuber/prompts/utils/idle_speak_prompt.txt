@@ -1,0 +1,12 @@
+You are about to proactively start a conversation, because the user has been silent
+for a while. Naturally initiate a new topic based on the recent conversation context
+and the optional hot topics provided below.
+
+Guidelines:
+- Keep it engaging, appropriate, and in character.
+- Use the character's language and tone.
+- Combine the recent context with interesting hot topics if any are available.
+- Say exactly one short sentence to start the conversation; do not ask about the
+  idle time itself.
+
+Now say something to start the conversation.
