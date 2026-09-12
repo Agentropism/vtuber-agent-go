@@ -4,6 +4,32 @@ WebSocket 多平台网关，接收 QQ/B站 等客户端上报的 OneBot 事件�
 
 **所有的注释和日志都使用中文**
 
+
+## 模块划分
+
+单 `go.mod`,顶层目录即模块边界;依赖只能向下,反向用函数注入破环(先例 `gateway/upload.SetActionForwarder`),不引入 DI 容器:
+
+```text
+app/                 装配:config → logger → 注入 → 注册 handler → 路由
+gateway/             接入层:只认平台协议,不认会话/LLM
+  event/               平台分发(event.Dispatch)+ onebot/ + bilibililive/(纯数据)
+  bilibili/            B站开放平台 WSS 客户端(只放连接,不放事件字段)
+  server/              WS 接入与 Action 写回
+  upload/              上行管线(暂存区/队列/长连接/回调)
+  filter/              去重 + 敏感词
+  distillery/          过渡期语音反馈转发(接入 broadcast 后删除)
+agent/               编排层:只认事件与会话,不认平台协议
+  conversation/        会话/LLM 编排
+  broadcast/           统一播报队列(优先级/打断/TTS 任务)
+  memory/              SQLite 历史与关键词召回
+  frontend/            /client-ws 与静态资源托管
+  tool/                Tool 注册层
+tts/                 云 TTS 引擎(5 家 + failover,不做本地推理)
+shared/              跨模块契约(零内部依赖);`shared/action` 为下行 Action 契约
+config/ logger/      基础设施
+```
+
+接口归调用方所有:agent 定义需要什么,gateway/tts 提供实现;反向只走 `SetXxxFunc`。
 ## 常用命令
 
 ```bash
@@ -52,7 +78,7 @@ path = "/bilibili"
 `upload/client.go`（包名 `upload`）：
 
 - `Init(target, callbackPlatform, Options)` 在 `app.Initialize()` 中调用一次，建立到记忆服务的 WebSocket 长连接（后台自动重连）；Options 承载缓存容量、等待上限、敏感词库、去重窗口等配置
-- 上传管线从前到后：去重+敏感词过滤（`internal/filter`）→ 有界缓存背压（`queue_size`/`queue_wait_timeout`，满时阻塞入队、超时丢弃并记录错误日志）→ Action 顺序门控（`BeginDispatch`/`FinishDispatch`，分发期间暂存，Action 给出后才放行）→ 远程写锁（`writeMu`，同一时刻只有一个在途上传）
+- 上传管线从前到后：去重+敏感词过滤（`gateway/filter`）→ 有界缓存背压（`queue_size`/`queue_wait_timeout`，满时阻塞入队、超时丢弃并记录错误日志）→ Action 顺序门控（`BeginDispatch`/`FinishDispatch`，分发期间暂存，Action 给出后才放行）→ 远程写锁（`writeMu`，同一时刻只有一个在途上传）
 - `Upload(ctx, platform, event)` / `UploadNotice(ctx, platform, userID, text)` 将 `platformEvent` JSON 序列化后进入上传管线，不等待远端响应
 - 目标地址由 `config.toml` 中 `[memory].target` 指定，格式 `ws://host:port/path`；为空时 `Init` 仅记录错误并跳过，上传直接丢弃
 

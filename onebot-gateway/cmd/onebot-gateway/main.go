@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"onebot-gateway/internal/app"
+	"onebot-gateway/app"
 )
 
 func main() {

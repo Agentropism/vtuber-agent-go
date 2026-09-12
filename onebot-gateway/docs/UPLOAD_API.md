@@ -24,7 +24,7 @@ onebot-gateway 将已处理的 QQ 群消息、QQ 通知和 B 站直播弹幕异�
 
 调用上传函数后，事件被序列化并进入上传管线，不会等待远端响应。管线从前到后依次为：
 
-1. **去重与敏感词过滤**（`internal/filter`）：先去重（键 `platform_name:channel_id:message_id`，`message_id` 为空时跳过；窗口由 `[memory].dedup_ttl` 配置，0=不启用），再对 `content_text` 做敏感词匹配（词库文件 `[memory].sensitive_words_file`，UTF-8 每行一词，`#` 开头为注释，前缀树匹配；文件缺失时 `upload.Init()` 返回错误并拒绝启动）。
+1. **去重与敏感词过滤**（`gateway/filter`）：先去重（键 `platform_name:channel_id:message_id`，`message_id` 为空时跳过；窗口由 `[memory].dedup_ttl` 配置，0=不启用），再对 `content_text` 做敏感词匹配（词库文件 `[memory].sensitive_words_file`，UTF-8 每行一词，`#` 开头为注释，前缀树匹配；文件缺失时 `upload.Init()` 返回错误并拒绝启动）。
 2. **有界缓存背压**：入队时缓存已满则阻塞等待，等待上限由 `[memory].queue_wait_timeout` 配置（0=无限）；超时则丢弃该事件并记录错误日志。
 3. **Action 顺序门控**：分发期间的上传请求暂存于 `DispatchScope`；server 把非零 Action 写回事件源客户端后、零 Action 事件在分发完成时，才放行入队，保证「先给出 Action，再上传」。
 4. **远程写锁**：发送 worker 获取写锁 `writeMu` 后才写远程 WebSocket，同一时刻只有一个在途上传。
@@ -188,7 +188,7 @@ QQ 的下列 OneBot 通知会被转换为 `type: "notice"` 后上传：
 
 | 职责 | 文件 |
 | --- | --- |
-| WebSocket 连接、队列和 JSON 组装 | `internal/upload/client.go` |
-| 上传初始化 | `internal/app/app.go` |
-| QQ 消息、通知及 B 站弹幕的注册 | `internal/app/register.go` |
+| WebSocket 连接、队列和 JSON 组装 | `gateway/upload/client.go` |
+| 上传初始化 | `app/app.go` |
+| QQ 消息、通知及 B 站弹幕的注册 | `app/register.go` |
 | 目标地址配置 | `config.toml` 的 `[memory].target` |
