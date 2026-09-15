@@ -13,7 +13,23 @@ model = "deepseek-chat"
 # 采样温度，0 表示使用默认值 1.0
 temperature = 0.7
 
+[agent]
+# 角色系统提示词；为空时使用内置兜底值
+system_prompt = "你是一个活泼可爱的女性 AI VTuber，名字叫 Mili。用简短、口语化的方式回复，每次回复不超过两句话。"
+# 单轮对话超时，例如 "60s"
+turn_timeout = "60s"
+# 每个会话（每个群 / 每个直播间）的待处理消息上限
+queue_size = 16
+# 单轮对话内工具循环上限，0 = 使用默认值 8
+max_tool_rounds = 8
+# 打断标记写入历史的角色：user（默认，所有端点可用）/ system
+interrupt_mode = "user"
+
 [memory]
+# 已废弃：事件终端已改为进程内 agent 会话，不再有远程 WebSocket 目标。
+# target / callback_platform 两个键保留仅为兼容旧配置文件，不再被读取。
+# target = "ws://127.0.0.1:12393/proxy-ws"
+# callback_platform = "qq"
 target = "ws://127.0.0.1:12393/proxy-ws"
 # 记忆服务下行 Action 的目标客户端平台
 callback_platform = "qq"

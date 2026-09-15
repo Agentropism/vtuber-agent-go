@@ -31,6 +31,13 @@ type Config struct {
 		Model       string  `mapstructure:"model"`       // 例如 deepseek-chat
 		Temperature float64 `mapstructure:"temperature"` // 0 表示使用默认值 1.0
 	} `mapstructure:"llm"`
+	Agent struct {
+		SystemPrompt  string        `mapstructure:"system_prompt"`   // 角色系统提示词，为空时用内置兜底值
+		MaxToolRounds int           `mapstructure:"max_tool_rounds"` // 单轮对话内工具循环上限，0=默认 8
+		InterruptMode string        `mapstructure:"interrupt_mode"`  // 打断标记角色：user（默认）/ system
+		QueueSize     int           `mapstructure:"queue_size"`      // 每个会话的待处理消息上限
+		TurnTimeout   time.Duration `mapstructure:"turn_timeout"`    // 单轮对话超时，例如 "60s"
+	} `mapstructure:"agent"`
 	Clients []ClientConfig `mapstructure:"clients"`
 }
 
