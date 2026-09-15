@@ -1,13 +1,13 @@
 # AGENTS.md — onebot-gateway
 
-WebSocket 多平台网关，接收 QQ/B站 等客户端上报的 OneBot 事件，分发到已注册的处理器链，并异步将群消息/通知上传到外部记忆服务。
+WebSocket 多平台网关，接收 QQ/B站 等客户端上报的 OneBot 事件，分发到已注册的处理器链，并把群消息/弹幕异步交给本地 agent 会话生成回复。
 
 **所有的注释和日志都使用中文**
 
 
 ## 模块划分
 
-单 `go.mod`,顶层目录即模块边界;依赖只能向下,反向用函数注入破环(先例 `gateway/upload.SetActionForwarder`),不引入 DI 容器:
+单 `go.mod`,顶层目录即模块边界;依赖只能向下,反向用函数注入破环(先例 `gateway/upload.SetHandler`),不引入 DI 容器:
 
 ```text
 app/                 装配:config → logger → 注入 → 注册 handler → 路由
@@ -15,11 +15,11 @@ gateway/             接入层:只认平台协议,不认会话/LLM
   event/               平台分发(event.Dispatch)+ onebot/ + bilibililive/(纯数据)
   bilibili/            B站开放平台 WSS 客户端(只放连接,不放事件字段)
   server/              WS 接入与 Action 写回
-  upload/              上行管线(暂存区/队列/长连接/回调)
+  upload/              事件上行管线(去重/敏感词 → 背压 → 分发门控),出口由 SetHandler 注入
   filter/              去重 + 敏感词
   distillery/          过渡期语音反馈转发(接入 broadcast 后删除)
 agent/               编排层:只认事件与会话,不认平台协议
-  conversation/        会话/LLM 编排
+  conversation/        会话编排:按 channel_id 的会话管理 + 单会话 Agent(上传管线的终端)
     llm/               OpenAI 兼容端点的流式客户端(基于 go-openai,无状态)
   broadcast/           统一播报队列(优先级/打断/TTS 任务)
   memory/              SQLite 历史与关键词召回
@@ -74,14 +74,17 @@ path = "/bilibili"
 - `app/register.go` 中 `registerQQ()` / `registerBilibili()` 分别注册各平台 handler
 - 上传时 `Upload(ctx, platform, event)` / `UploadNotice(ctx, platform, userID, text)` 的 `platform` 参数写入 `platformEvent.PlatformName`
 
-### 事件上传
+### 事件上行与 agent 接入
 
 `upload/client.go`（包名 `upload`）：
 
-- `Init(target, callbackPlatform, Options)` 在 `app.Initialize()` 中调用一次，建立到记忆服务的 WebSocket 长连接（后台自动重连）；Options 承载缓存容量、等待上限、敏感词库、去重窗口等配置
-- 上传管线从前到后：去重+敏感词过滤（`gateway/filter`）→ 有界缓存背压（`queue_size`/`queue_wait_timeout`，满时阻塞入队、超时丢弃并记录错误日志）→ Action 顺序门控（`BeginDispatch`/`FinishDispatch`，分发期间暂存，Action 给出后才放行）→ 远程写锁（`writeMu`，同一时刻只有一个在途上传）
-- `Upload(ctx, platform, event)` / `UploadNotice(ctx, platform, userID, text)` 将 `platformEvent` JSON 序列化后进入上传管线，不等待远端响应
-- 目标地址由 `config.toml` 中 `[memory].target` 指定，格式 `ws://host:port/path`；为空时 `Init` 仅记录错误并跳过，上传直接丢弃
+- `Init(Options)` 在 `app.Initialize()` 中调用一次；Options 承载缓存容量、等待上限、敏感词库、去重窗口等配置
+- 事件终端由 `SetHandler(fn func(payload []byte))` 注入，**进程内异步方法调用**，不再连远端 WebSocket；未注入时事件被丢弃并记录日志
+- 管线从前到后：去重+敏感词过滤（`gateway/filter`）→ 有界缓存背压（`queue_size`/`queue_wait_timeout`，满时阻塞入队、超时丢弃并记录错误日志）→ Action 顺序门控（`BeginDispatch`/`FinishDispatch`，分发期间暂存，Action 给出后才放行）→ 专用消费协程串行调用终端处理器
+- `Upload(ctx, platform, event)` / `UploadNotice(ctx, platform, userID, text)` 将 `platformEvent` JSON 序列化后进入管线，不等待处理结果
+- 终端的实现是 `conversation.Sessions.Handle`：解析 `platformEvent` → 按 `channel_id` 路由到会话 → 会话协程内跑 `Agent.Chat` → 用注入的 `ReplyFunc`（`server.SendAction`）把回复写回平台
+
+回复方向由 `agent/conversation.buildReply` 决定：目前只有 QQ 群有下行动作（`send_group_msg`），B 站弹幕没有发送接口、只生成不发送。
 
 ### Logger 注入
 
@@ -101,4 +104,4 @@ path = "/bilibili"
 
 - QQ 侧：OneBot v11 客户端（配置 `[[clients]]` + `[server].addr`）
 - B站 侧：bilibili live 转 OneBot 格式客户端
-- 记忆服务：WebSocket 端点（配置 `[memory].target`，接收 `platformEvent` JSON）
+- LLM：OpenAI 兼容远程端点（配置 `[llm]`，凭据可用环境变量 `LLM_API_KEY`）；未配置时跳过会话初始化，事件被丢弃

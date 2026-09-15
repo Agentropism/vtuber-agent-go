@@ -11,9 +11,7 @@ import (
 	"onebot-gateway/gateway/event/bilibililive"
 	event "onebot-gateway/gateway/event/onebot"
 	wordfilter "onebot-gateway/gateway/filter"
-	"onebot-gateway/shared/action"
 
-	"github.com/coder/websocket"
 	"go.uber.org/zap"
 )
 
@@ -55,26 +53,41 @@ type platformContent struct {
 	Text string `json:"text,omitempty"`
 }
 
-// ---- 长连接管理 ----
+// ---- 管线状态 ----
 
 var (
-	wsConn           *websocket.Conn
-	writeCh          chan []byte // 层1：有界缓存，Init 时按 QueueSize 创建
-	writeMu          sync.Mutex  // 层2：远程写锁，同一时刻只允许一个在途上传
+	queue            chan []byte // 有界缓存，Init 时按 QueueSize 创建
 	done             = make(chan struct{})
-	targetURL        string
-	callbackPlatform string
-	queueWaitTimeout time.Duration // 层1：缓存满时入队等待上限，0=无限等待
-	noConsumer       bool          // 层2：目标未配置时无消费端，入队直接丢弃
+	queueWaitTimeout time.Duration // 缓存满时入队等待上限，0=无限等待
 	filter           *wordfilter.Filter
 
-	// lifecycleMu 串行化 Init/Shutdown 与包级状态重写，防止与前一生命周期遗留的 connectLoop 协程竞争
+	// lifecycleMu 串行化 Init/Shutdown 与包级状态重写，防止与前一生命周期遗留的消费协程竞争
 	lifecycleMu sync.Mutex
 
-	// forwardAction 远程 Action 转发回调，由 app 注入（server.SendAction），
-	// 避免 upload 包导入 server 包造成循环依赖。
-	forwardAction func(platform string, act action.Action) error
+	// handler 事件终端处理器，由 app 注入（本地 agent 会话层）。
+	handlerMu sync.RWMutex
+	handler   Handler
 )
+
+// Handler 是上传管线的终端处理器。
+//
+// 它在专用消费协程中串行调用，不应长时间阻塞——阻塞会拖慢整条管线并触发背压。
+// 典型实现是本地 agent 会话层的 Handle：解析事件、路由到会话、异步生成回复。
+type Handler func(payload []byte)
+
+// SetHandler 注入事件终端处理器，可在 Init 前后任意时刻调用。
+func SetHandler(h Handler) {
+	handlerMu.Lock()
+	handler = h
+	handlerMu.Unlock()
+}
+
+// currentHandler 返回当前处理器，未注入时为 nil。
+func currentHandler() Handler {
+	handlerMu.RLock()
+	defer handlerMu.RUnlock()
+	return handler
+}
 
 // Options 上传管线配置。
 type Options struct {
@@ -98,20 +111,16 @@ func SetLogger(l *zap.Logger) {
 	}
 }
 
-// SetActionForwarder 注入远程 Action 转发回调（server.SendAction），解除 server↔upload 循环依赖。
-func SetActionForwarder(fn func(platform string, act action.Action) error) {
-	forwardAction = fn
-}
-
-// Init 建立到记忆服务的 WebSocket 长连接，启动后台读写协程。
-// 连接断开后自动重连。opts 为上传管线配置。
-// 目标地址为空时仅记录错误并跳过初始化（缓存仍创建，避免 nil 通道阻塞入队）。
-func Init(target string, callbackTargetPlatform string, opts Options) error {
+// Init 初始化上传管线：创建有界缓存与过滤器，并启动消费协程。
+//
+// 事件终端由 SetHandler 注入（本地 agent 会话层），未注入时事件会被丢弃。
+// opts 为上传管线配置。
+func Init(opts Options) error {
 	lifecycleMu.Lock()
 	defer lifecycleMu.Unlock()
 
-	// 先关闭旧 done：保证前一生命周期遗留的 connectLoop 协程观察到关闭信号后退出，
-	// 再重写包级状态，避免与读 `<-done`、`websocket.Dial(ctx, targetURL, ...)` 的旧协程竞争
+	// 先关闭旧 done：保证前一生命周期遗留的消费协程观察到关闭信号后退出，
+	// 再重写包级状态，避免与读 `<-done` 的旧协程竞争
 	select {
 	case <-done:
 	default:
@@ -122,17 +131,8 @@ func Init(target string, callbackTargetPlatform string, opts Options) error {
 	if size <= 0 {
 		size = 256
 	}
-	writeCh = make(chan []byte, size)
+	queue = make(chan []byte, size)
 	done = make(chan struct{})
-	noConsumer = false
-
-	if target == "" {
-		noConsumer = true
-		log.Sugar().Error("上传目标地址为空，跳过初始化")
-		return nil
-	}
-	targetURL = target
-	callbackPlatform = callbackTargetPlatform
 	queueWaitTimeout = opts.QueueWaitTimeout
 
 	f, err := wordfilter.New(opts.SensitiveWordsFile, opts.DedupTTL)
@@ -141,7 +141,7 @@ func Init(target string, callbackTargetPlatform string, opts Options) error {
 	}
 	filter = f
 
-	go connectLoop(targetURL, done)
+	go consumeLoop(queue, done)
 	return nil
 }
 
@@ -157,118 +157,22 @@ func Shutdown() {
 	}
 }
 
-// connectLoop 持锁建立连接并自动重连。
-// url/stop 为 Init 持锁时传入的快照（go 语句参数求值建立 happens-before），
-// 循环内只读快照，杜绝与后续 Init 在锁内重写 done/targetURL 竞争。
-func connectLoop(url string, stop <-chan struct{}) {
+// consumeLoop 串行消费缓存中的事件并交给终端处理器。
+//
+// pending/stop 为 Init 持锁时传入的快照：循环内只读快照，杜绝与后续 Init
+// 在锁内重写 queue/done 竞争。
+func consumeLoop(pending <-chan []byte, stop <-chan struct{}) {
 	for {
 		select {
 		case <-stop:
-			closeConn()
 			return
-		default:
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-			CompressionMode: websocket.CompressionDisabled,
-		})
-		cancel()
-		if err != nil {
-			log.Sugar().Errorf("上传 WebSocket 连接失败: %v，正在重试...", err)
-			sleepOrDone(stop, 3*time.Second)
-			continue
-		}
-
-		conn.SetReadLimit(10 * 1024 * 1024)
-		wsConn = conn
-
-		log.Sugar().Info("上传 WebSocket 已连接")
-
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go readLoop(conn, &wg)
-		go writeLoop(conn, &wg)
-		wg.Wait()
-
-		wsConn = nil
-
-		select {
-		case <-stop:
-			return
-		default:
-			log.Sugar().Warn("上传 WebSocket 已断开，正在重连...")
-			sleepOrDone(stop, 1*time.Second)
-		}
-	}
-}
-
-func sleepOrDone(stop <-chan struct{}, d time.Duration) {
-	select {
-	case <-stop:
-	case <-time.After(d):
-	}
-}
-
-func closeConn() {
-	if wsConn != nil {
-		wsConn.Close(websocket.StatusNormalClosure, "shutdown")
-		wsConn = nil
-	}
-}
-
-func readLoop(conn *websocket.Conn, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
-		select {
-		case <-done:
-			return
-		default:
-		}
-		_, payload, err := conn.Read(context.Background())
-		if err != nil {
-			log.Sugar().Debugf("上传 WebSocket 读取结束: %v", err)
-			return
-		}
-		go handleCallbackAction(payload)
-
-	}
-}
-
-// handleCallbackAction 处理远程写回的 Action。
-func handleCallbackAction(payload []byte) {
-	var act action.Action
-	if err := json.Unmarshal(payload, &act); err != nil {
-		log.Sugar().Errorf("解析回调事件失败: %v", err)
-		return
-	}
-	log.Sugar().Infof("收到远程 Action: action=%s params=%v echo=%v target_platform=%s", act.Action, act.Params, act.Echo, callbackPlatform)
-	if forwardAction == nil {
-		log.Sugar().Error("未注入 Action 转发回调，忽略远程 Action")
-		return
-	}
-	if err := forwardAction(callbackPlatform, act); err != nil {
-		log.Sugar().Errorf("转发远程 Action 失败: %v", err)
-		return
-	}
-	log.Sugar().Infof("远程 Action 已转发: action=%s target_platform=%s", act.Action, callbackPlatform)
-}
-
-func writeLoop(conn *websocket.Conn, wg *sync.WaitGroup) {
-	defer wg.Done()
-	for {
-		select {
-		case <-done:
-			return
-		case payload := <-writeCh:
-			// 层2：获取远程写锁，保证同一时刻只有一个在途上传
-			writeMu.Lock()
-			err := conn.Write(context.Background(), websocket.MessageText, payload)
-			writeMu.Unlock()
-			if err != nil {
-				log.Sugar().Errorf("上传 WebSocket 写入失败: %v", err)
-				return
+		case payload := <-pending:
+			h := currentHandler()
+			if h == nil {
+				log.Sugar().Warn("未注入事件处理器，丢弃事件")
+				continue
 			}
+			h(payload)
 		}
 	}
 }
@@ -340,9 +244,9 @@ func scopeFrom(ctx context.Context) *DispatchScope {
 // enqueue 将负载写入有界缓存。
 // 缓存满时按 queueWaitTimeout 等待（0=无限等待），实现背压；超时则丢弃并记录错误。
 func enqueue(payload []byte) {
-	// 目标未配置时无消费端：非阻塞丢弃，避免无限等待挂起事件链
-	if noConsumer {
-		log.Sugar().Warn("上传目标未配置，丢弃事件")
+	// 未注入终端处理器时无消费方：非阻塞丢弃，避免无限等待挂起事件链
+	if currentHandler() == nil {
+		log.Sugar().Warn("未注入事件处理器，丢弃事件")
 		return
 	}
 	// done 已关闭时直接丢弃，避免 select 在关闭与未满之间随机落到入队分支
@@ -354,7 +258,7 @@ func enqueue(payload []byte) {
 	}
 	if queueWaitTimeout <= 0 {
 		select {
-		case writeCh <- payload:
+		case queue <- payload:
 			log.Sugar().Debug("上传事件已入队")
 		case <-done:
 			log.Sugar().Warn("上传缓存已满且网关关闭，丢弃事件")
@@ -364,7 +268,7 @@ func enqueue(payload []byte) {
 	timer := time.NewTimer(queueWaitTimeout)
 	defer timer.Stop()
 	select {
-	case writeCh <- payload:
+	case queue <- payload:
 		log.Sugar().Debug("上传事件已入队")
 	case <-timer.C:
 		log.Sugar().Error("上传缓存已满且等待超时，丢弃事件")
