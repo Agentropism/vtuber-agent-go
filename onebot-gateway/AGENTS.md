@@ -20,6 +20,7 @@ gateway/             接入层:只认平台协议,不认会话/LLM
   distillery/          过渡期语音反馈转发(接入 broadcast 后删除)
 agent/               编排层:只认事件与会话,不认平台协议
   conversation/        会话/LLM 编排
+    llm/               OpenAI 兼容端点的流式客户端(基于 go-openai,无状态)
   broadcast/           统一播报队列(优先级/打断/TTS 任务)
   memory/              SQLite 历史与关键词召回
   frontend/            /client-ws 与静态资源托管
