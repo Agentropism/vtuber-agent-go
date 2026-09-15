@@ -25,6 +25,12 @@ type Config struct {
 	Server struct {
 		Addr string `mapstructure:"addr"`
 	} `mapstructure:"server"`
+	LLM struct {
+		BaseURL     string  `mapstructure:"base_url"`    // OpenAI 兼容端点，例如 https://api.deepseek.com/v1
+		APIKey      string  `mapstructure:"api_key"`     // 优先取环境变量 LLM_API_KEY
+		Model       string  `mapstructure:"model"`       // 例如 deepseek-chat
+		Temperature float64 `mapstructure:"temperature"` // 0 表示使用默认值 1.0
+	} `mapstructure:"llm"`
 	Clients []ClientConfig `mapstructure:"clients"`
 }
 
@@ -39,6 +45,11 @@ func ProvideConfig() (*Config, error) {
 	v.SetConfigName("config")
 	v.SetConfigType("toml")
 	v.AddConfigPath(".")
+
+	// 凭据不进仓库：api_key 留空时回退到环境变量
+	if err := v.BindEnv("llm.api_key", "LLM_API_KEY"); err != nil {
+		return nil, fmt.Errorf("bind env: %w", err)
+	}
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
