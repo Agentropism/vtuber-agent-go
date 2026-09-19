@@ -1,0 +1,22 @@
+{
+  "cmd": "LIVE_OPEN_PLATFORM_GUARD",
+  "data": {
+    "user_info": {
+      "uid": 0,
+      "open_id": "open_id_4",
+      "union_id": "union_id_4",
+      "uname": "上舰用户",
+      "uface": "https://example.com/face4.png"
+    },
+    "guard_level": 3,
+    "guard_num": 1,
+    "guard_unit": "月",
+    "price": 198000,
+    "fans_medal_level": 21,
+    "fans_medal_name": "船票",
+    "fans_medal_wearing_status": true,
+    "timestamp": 1785800004,
+    "room_id": 123456,
+    "msg_id": "msg_006"
+  }
+}

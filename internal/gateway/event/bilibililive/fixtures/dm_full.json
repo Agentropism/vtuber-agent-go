@@ -1,0 +1,24 @@
+{
+  "cmd": "LIVE_OPEN_PLATFORM_DM",
+  "data": {
+    "uname": "测试用户",
+    "uid": 0,
+    "open_id": "open_id_1",
+    "union_id": "union_id_1",
+    "uface": "https://example.com/face.png",
+    "timestamp": 1785800000,
+    "room_id": 123456,
+    "msg": "你好呀",
+    "msg_id": "msg_001",
+    "guard_level": 3,
+    "fans_medal_wearing_status": true,
+    "fans_medal_name": "小奖牌",
+    "fans_medal_level": 5,
+    "emoji_img_url": "",
+    "dm_type": 0,
+    "glory_level": 0,
+    "reply_open_id": "",
+    "reply_uname": "",
+    "is_admin": 0
+  }
+}

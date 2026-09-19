@@ -1,0 +1,153 @@
+[server]
+addr = ":8080"
+
+[log]
+level = "info"
+
+[llm]
+# OpenAI 兼容端点；DeepSeek 用 https://api.deepseek.com/v1
+base_url = "https://api.deepseek.com/v1"
+# 凭据不进仓库：此处留空则读环境变量 LLM_API_KEY
+api_key = ""
+model = "deepseek-chat"
+# 采样温度，0 表示使用默认值 1.0
+temperature = 0.7
+
+[agent]
+# 角色定义文件（TOML，见 characters/mili.toml）；非空时其 system_prompt 优先于下面这行
+character_file = "characters/mili.toml"
+# 角色系统提示词；character_file 为空时使用，两者都为空时用内置兜底值
+system_prompt = "你是一个活泼可爱的女性 AI VTuber，名字叫 Mili。用简短、口语化的方式回复，每次回复不超过两句话。"
+# 单轮对话超时，例如 "60s"
+turn_timeout = "60s"
+# 每个会话（每个群 / 每个直播间）的待处理消息上限
+queue_size = 16
+# 单轮对话内工具循环上限，0 = 使用默认值 8
+max_tool_rounds = 8
+# 打断标记写入历史的角色：user（默认，所有端点可用）/ system
+interrupt_mode = "user"
+# 历史裁剪：只保留最近 N 轮对话，0 = 使用默认值 12
+history_max_turns = 12
+# 历史裁剪：估算 token 上限（中文 1 字≈1 token，其余 4 字符≈1 token），0 = 使用默认值 4000
+history_max_tokens = 4000
+# 长期记忆文件（JSON Lines）；为空表示不启用记忆与召回
+memory_file = "data/memory.jsonl"
+# 每轮对话召回的条数，0 = 使用默认值 5
+recall_limit = 5
+# 打开工具调用：记忆检索（memory_search）与状态查询（bot_status）
+enable_tools = true
+# 渠道静默超过该时长就主动说一句，例如 "5m"；"0s" = 不主动发言
+idle_speak_interval = "0s"
+# 主动发言时给模型的提示词，留空用内置兜底
+idle_speak_prompt = ""
+
+[tts]
+# 引擎降级顺序，按序降级；留空表示不启用语音播报（只做文本回复）
+engines = ["edge_tts"]
+
+[tts.edge_tts]
+# 微软 Edge 朗读：免费、无需 key，但属社区逆向协议，有地区封锁风险
+# 音色留空则用默认 zh-CN-XiaoxiaoNeural（中文女声）
+voice = ""
+rate = "+0%"
+volume = "+0%"
+pitch = "+0Hz"
+# 显式代理；留空时读环境变量 HTTP_PROXY / HTTPS_PROXY
+proxy = ""
+# 拨号与接收超时（秒）
+receive_timeout = 30
+
+[tts.openai_tts]
+base_url = "https://api.openai.com/v1"
+# 留空则读环境变量 OPENAI_API_KEY
+api_key = ""
+model = "tts-1"
+voice = "alloy"
+# 语速，0 表示不下发该字段
+speed = 0
+
+[tts.siliconflow_tts]
+base_url = "https://api.siliconflow.cn/v1"
+# 留空则读环境变量 SILICONFLOW_API_KEY
+api_key = ""
+model = "FunAudioLLM/CosyVoice2-0.5B"
+voice = "speech:Dreamflowers:5bdstvc39i:xkqldnpasqmoqbakubom"
+speed = 0
+# 采样率固定 24000 以对齐 PCM 契约；gain 为音量增益，0 表示不下发
+sample_rate = 24000
+gain = 0
+
+[tts.fish_api_tts]
+base_url = "https://api.fish.audio"
+# 留空则读环境变量 FISH_API_KEY
+api_key = ""
+model = ""
+# 音色模型 ID
+reference_id = ""
+latency = "balanced"
+sample_rate = 24000
+
+[tts.minimax_tts]
+base_url = "https://api.minimax.chat"
+group_id = ""
+# 留空则读环境变量 MINIMAX_API_KEY
+api_key = ""
+model = "speech-02-turbo"
+voice_id = "female-shaonv"
+sample_rate = 24000
+
+[broadcast]
+# 并行合成上限：一段在播时提前合成下一段，降低首字延迟
+concurrency = 2
+# 待合成条目上限，超出时淘汰最低优先级
+max_pending = 32
+# 两次播报之间的最小间隔，例如 "2s"；0 表示不限
+min_interval = "0s"
+
+[memory]
+# 上传缓存容量（默认 256，0 也按 256 处理）
+queue_size = 256
+# 缓存满时的等待上限，0 = 无限等待（背压）；例如 "10s"
+queue_wait_timeout = "0s"
+# 敏感词库文件路径（UTF-8，每行一个词，# 开头为注释）；为空则不启用过滤
+sensitive_words_file = ""
+# 消息去重窗口，例如 "600s"；0 = 不启用
+dedup_ttl = "600s"
+
+[frontend]
+# 前端接入（浏览器页面 + /client-ws + 模型静态资源）；配了模型目录即自动启用
+enabled = false
+# Live2D 模型根目录，结构为 <模型名>/runtime/<模型名>.model3.json
+models_dir = "../Open-LLM-VTuber/live2d-models"
+# 模型清单（提供缩放、偏移与 emotionMap）；留空则扫描模型目录、用内置兜底词表
+model_dict = "../Open-LLM-VTuber/model_dict.json"
+# 模型显示倍率：1.0 = 正好占满视口高度；0 = 沿用模型清单里的值
+model_scale = 0.8
+
+[[clients]]
+platform = "qq"
+adapter_key = "onebot_v11"
+path = "/qq"
+
+[[clients]]
+platform = "bilibili"
+adapter_key = "bilibili_live"
+path = "/bilibili"
+
+# B 站直播开放平台长连接（进程内接入，等于内置一个 B 站客户端）
+# 凭据齐全时自动启用；也可用 enabled = true 显式打开。
+# 凭据不进仓库：留空时回退环境变量 BILIBILI_ACCESS_KEY / BILIBILI_ACCESS_KEY_SECRET /
+# BILIBILI_ID_CODE / BILIBILI_APP_ID。
+[bilibili]
+enabled = false
+# 开放平台 HTTP 地址，留空用官方地址 https://live-open.biliapi.com
+host = ""
+# 开放平台的 access key id 与签名密钥
+access_key = ""
+access_key_secret = ""
+# 主播身份码
+id_code = ""
+# 应用 ID（整数）
+app_id = 0
+# 心跳周期，留空（"0s"）用默认 20s
+heartbeat_interval = "20s"

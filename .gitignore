@@ -1,0 +1,14 @@
+# 运行时配置：里面有 B 站 access key、LLM key 等凭据，不进仓库。
+# 模板见 config.toml.example，新环境复制一份再填。
+config.toml
+
+# 长期记忆与运行时数据
+data/
+
+# 就地编译出来的二进制
+/vtuber-agent-go
+
+# 本机工具状态（pi / claude / codegraph），不属于项目交付物
+.pi/
+.claude/
+.codegraph/

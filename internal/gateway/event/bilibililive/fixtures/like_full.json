@@ -1,0 +1,18 @@
+{
+  "cmd": "LIVE_OPEN_PLATFORM_LIKE",
+  "data": {
+    "uname": "点赞用户",
+    "uid": 0,
+    "open_id": "open_id_5",
+    "union_id": "union_id_5",
+    "uface": "https://example.com/face5.png",
+    "timestamp": 1785800005,
+    "like_text": "点赞用户点赞了",
+    "like_count": "12",
+    "fans_medal_wearing_status": false,
+    "fans_medal_name": "",
+    "fans_medal_level": 0,
+    "msg_id": "msg_007",
+    "room_id": 123456
+  }
+}

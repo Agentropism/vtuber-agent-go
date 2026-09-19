@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SyAgent Live2D</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  body {
+    background: radial-gradient(circle at 50% 20%, #1d2433 0%, #0b0e14 70%);
+    font-family: system-ui, -apple-system, "Noto Sans SC", sans-serif;
+    color: #e8ecf3;
+  }
+  #stage { position: fixed; inset: 0; display: block; }
+
+  #caption {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    width: min(880px, calc(100vw - 48px));
+    padding: 14px 20px; border-radius: 14px;
+    background: rgba(12, 16, 24, .72); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, .08);
+    font-size: 20px; line-height: 1.5; min-height: 56px;
+    opacity: 0; transition: opacity .2s ease;
+    display: flex; gap: 10px; align-items: baseline;
+  }
+  #caption.on { opacity: 1; }
+  #speaker { color: #7fd1ff; font-weight: 600; white-space: nowrap; }
+
+  #status {
+    position: fixed; right: 14px; top: 12px;
+    font-size: 13px; padding: 6px 12px; border-radius: 999px;
+    background: rgba(12, 16, 24, .7); border: 1px solid rgba(255, 255, 255, .08);
+    color: #9fb0c8;
+  }
+  #status.ok { color: #7ee0a8; }
+  #status.err { color: #ff9a9a; }
+
+  /* 浏览器不允许没有用户交互就出声，所以先要一次点击；点击后才连服务端，
+     这样开始播报之前的内容不会被静默丢掉。 */
+  #gate {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 18px; background: rgba(8, 11, 17, .82);
+    backdrop-filter: blur(3px); z-index: 10; text-align: center; padding: 24px;
+  }
+  #gate.off { display: none; }
+  #gate h1 { margin: 0; font-size: 26px; font-weight: 600; }
+  #gate p { margin: 0; color: #9fb0c8; font-size: 15px; }
+  #start {
+    margin-top: 6px; padding: 12px 34px; font-size: 17px; cursor: pointer;
+    color: #0b0e14; background: #7fd1ff; border: 0; border-radius: 999px;
+    font-weight: 600; transition: transform .12s ease, background .12s ease;
+  }
+  #start:hover { background: #a5e0ff; transform: translateY(-1px); }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <div id="caption"><span id="speaker"></span><span id="text"></span></div>
+  <div id="status">未开始</div>
+
+  <div id="gate">
+    <h1 id="gate-title">SyAgent</h1>
+    <p>浏览器要求先有一次点击才能自动出声。</p>
+    <button id="start">点击开始</button>
+  </div>
+
+  <script src="./libs/live2dcubismcore.min.js"></script>
+  <script src="./libs/pixi.min.js"></script>
+  <script src="./libs/cubism4.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
