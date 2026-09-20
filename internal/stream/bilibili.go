@@ -320,6 +320,15 @@ func requestBili(ctx context.Context, base string, client *http.Client, req *htt
 	req.Header.Set("Origin", base)
 	req.Header.Set("Referer", base+"/")
 	req.Header.Set("Accept", "*/*")
+	// 浏览器指纹头：B 站 风控按「这请求像不像已知浏览器会话」决定是否套用严格准入，
+	// 参考项目同样发这一组。少了它们，同一个账号可能直接被判成第三方工具。
+	req.Header.Set("Sec-Ch-Ua", `"Microsoft Edge";v="143", "Chromium";v="143", "Not A(Brand";v="24"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
+	req.Header.Set("Sec-Ch-Ua-Platform", `"Windows"`)
+	req.Header.Set("Sec-Fetch-Dest", "empty")
+	req.Header.Set("Sec-Fetch-Mode", "cors")
+	req.Header.Set("Sec-Fetch-Site", "same-site")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}

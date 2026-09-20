@@ -94,6 +94,12 @@ func TestStartLiveSendsSignedFormAndParsesAddress(t *testing.T) {
 	if startHeaders.Get("Origin") == "" {
 		t.Fatal("缺少 Origin 头")
 	}
+	// 浏览器指纹头：B 站 风控按「像不像已知浏览器会话」决定是否套用严格准入
+	for _, header := range []string{"Sec-Ch-Ua", "Sec-Ch-Ua-Platform", "Sec-Fetch-Dest", "Sec-Fetch-Mode", "Sec-Fetch-Site"} {
+		if startHeaders.Get(header) == "" {
+			t.Fatalf("缺少浏览器指纹头 %s", header)
+		}
+	}
 }
 
 // 需要扫码/人脸时要说人话，别只丢一个错误码。

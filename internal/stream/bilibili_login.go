@@ -31,8 +31,10 @@ const (
 	loginCodeWaiting = 86101
 )
 
-// cookieForLogin 是登录成功后需要落盘并复用的几项，顺序即拼接顺序。
-var cookieForLogin = []string{"SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5"}
+// cookieForLogin 是登录成功必须拿到的两项；缺了就按登录失败处理。
+//
+// 其余的 cookie（buvid3 / buvid4 / b_nut 等）同样要保留并回发，见 cookieValue。
+var cookieForLogin = []string{"SESSDATA", "bili_jct"}
 
 // LoginState 是二维码的当前状态，直接透给前端。
 type LoginState string
@@ -135,13 +137,12 @@ func PollLogin(ctx context.Context, cfg LoginConfig, key string) (LoginResult, e
 
 	switch payload.Data.Code {
 	case loginCodeSuccess:
-		cookie := cookieValue(cookies)
-		if cookie == "" {
-			// 状态说成功但没给 cookie：当成失败，不能揣着一个空凭据往下走
-			return LoginResult{}, errors.New("stream: 登录已确认但响应里没有 cookie")
+		if missing := missingLoginCookies(cookies); len(missing) > 0 {
+			// 必需项缺失：当成失败，不能揣着半个凭据往下走
+			return LoginResult{}, fmt.Errorf("stream: 登录已确认但缺少 %s", strings.Join(missing, "、"))
 		}
 
-		return LoginResult{State: LoginConfirmed, Cookie: cookie, Message: "登录成功"}, nil
+		return LoginResult{State: LoginConfirmed, Cookie: cookieValue(cookies), Message: "登录成功"}, nil
 	case loginCodeScanned:
 		return LoginResult{State: LoginScanned, Message: payload.Data.Message}, nil
 	case loginCodeExpired:
@@ -154,21 +155,41 @@ func PollLogin(ctx context.Context, cfg LoginConfig, key string) (LoginResult, e
 	}
 }
 
-// cookieValue 从 Set-Cookie 里挑出登录态需要的几项拼成 Cookie 串。
+// cookieValue 把 Set-Cookie 全量拼成 Cookie 串。
+//
+// **不挑不拣**：B 站 还会下发 buvid3 / buvid4 / b_nut 这类设备指纹 cookie，风控拿它们
+// 判断「这个请求像不像已知的浏览器会话」。参考项目就是全量存、全量回发；我们先前只挑
+// 4 个必要项，等于每次请求都以陌生设备身份出现（同一账号在参考工具里能开播，在这里
+// 被 60045 开播准入拒掉——这是最可疑的差异）。
 func cookieValue(cookies []*http.Cookie) string {
-	byName := make(map[string]string, len(cookies))
+	parts := make([]string, 0, len(cookies))
+	seen := make(map[string]bool, len(cookies))
 	for _, cookie := range cookies {
-		byName[cookie.Name] = cookie.Value
-	}
-
-	parts := make([]string, 0, len(cookieForLogin))
-	for _, name := range cookieForLogin {
-		if value := byName[name]; value != "" {
-			parts = append(parts, name+"="+value)
+		if cookie.Name == "" || cookie.Value == "" || seen[cookie.Name] {
+			continue
 		}
+		seen[cookie.Name] = true
+		parts = append(parts, cookie.Name+"="+cookie.Value)
 	}
 
 	return strings.Join(parts, "; ")
+}
+
+// missingLoginCookies 列出登录必需但没拿到的 cookie。
+func missingLoginCookies(cookies []*http.Cookie) []string {
+	have := make(map[string]bool, len(cookies))
+	for _, cookie := range cookies {
+		have[cookie.Name] = true
+	}
+
+	var missing []string
+	for _, name := range cookieForLogin {
+		if !have[name] {
+			missing = append(missing, name)
+		}
+	}
+
+	return missing
 }
 
 // SaveLoginCookie 把登录态落盘，供下次启动直接复用。

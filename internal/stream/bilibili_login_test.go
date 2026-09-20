@@ -68,7 +68,8 @@ func TestPollLoginStates(t *testing.T) {
 					http.SetCookie(w, &http.Cookie{Name: "SESSDATA", Value: "sess"})
 					http.SetCookie(w, &http.Cookie{Name: "bili_jct", Value: "jct"})
 					http.SetCookie(w, &http.Cookie{Name: "DedeUserID", Value: "42"})
-					http.SetCookie(w, &http.Cookie{Name: "unrelated", Value: "x"})
+					// 设备指纹 cookie：风控靠它判断「像不像已知浏览器会话」，必须一起留下来
+					http.SetCookie(w, &http.Cookie{Name: "buvid3", Value: "fp-a"})
 				}
 				_, _ = w.Write([]byte(`{"code":0,"data":{"code":` + itoa(tc.code) + `,"message":"msg"}}`))
 			}))
@@ -85,13 +86,28 @@ func TestPollLoginStates(t *testing.T) {
 				if !strings.Contains(result.Cookie, "SESSDATA=sess") || !strings.Contains(result.Cookie, "bili_jct=jct") {
 					t.Fatalf("cookie 不完整: %q", result.Cookie)
 				}
-				if strings.Contains(result.Cookie, "unrelated") {
-					t.Fatalf("不该把无关 cookie 也带上: %q", result.Cookie)
+				if !strings.Contains(result.Cookie, "buvid3=fp-a") {
+					t.Fatalf("指纹 cookie 必须一起留下（风控看它）: %q", result.Cookie)
 				}
 			} else if result.Cookie != "" {
 				t.Fatalf("非确认状态不该带 cookie: %q", result.Cookie)
 			}
 		})
+	}
+}
+
+// 必需项缺失时按失败处理：半套凭据拿去开播只会得到莫名其妙的错误。
+func TestPollLoginMissingEssentialCookie(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "SESSDATA", Value: "sess"})
+		// 故意不给 bili_jct
+		_, _ = w.Write([]byte(`{"code":0,"data":{"code":0,"message":"ok"}}`))
+	}))
+	defer server.Close()
+
+	_, err := PollLogin(context.Background(), LoginConfig{BaseURL: server.URL}, "key-123")
+	if err == nil || !strings.Contains(err.Error(), "bili_jct") {
+		t.Fatalf("缺 bili_jct 应当报错并点名: %v", err)
 	}
 }
 
