@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/config"
 	"github.com/Agentropism/vtuber-agent-go/internal/stream"
@@ -205,4 +207,164 @@ func getLoginStatus(t *testing.T, url string) map[string]string {
 	}
 
 	return payload
+}
+
+// newVerifyLogin 造一个推流状态固定的登录服务，用来测验证页。
+func newVerifyLogin(t *testing.T, status streamStatus) *httptest.Server {
+	t.Helper()
+
+	runtime := &streamRuntime{}
+	runtime.streaming = status.Streaming
+	runtime.pending = status.Pending
+
+	s := &loginService{
+		cfg:    config.StreamConfig{CookieFile: filepath.Join(t.TempDir(), "cookie.txt")},
+		log:    zap.NewNop(),
+		stream: runtime,
+	}
+
+	return serveLogin(t, s)
+}
+
+func getBody(t *testing.T, url string) string {
+	t.Helper()
+
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读响应: %v", err)
+	}
+
+	return string(body)
+}
+
+// 60024：页面要给出可扫的二维码，PNG 端点要真出图。
+func TestVerifyPageForQRCode(t *testing.T) {
+	server := newVerifyLogin(t, streamStatus{Pending: &pendingVerify{
+		Code: 60024,
+		QR:   "https://example.com/verify?token=abc",
+		At:   time.Now(),
+	}})
+
+	body := getBody(t, server.URL+loginVerifyPattern)
+	if !strings.Contains(body, "扫码") || !strings.Contains(body, loginVerifyQRPattern) {
+		t.Fatalf("验证页没有给出扫码入口:\n%s", body)
+	}
+	if !strings.Contains(body, "http-equiv=\"refresh\"") {
+		t.Fatal("未推流时页面应当自动刷新，扫完才能自己接上")
+	}
+
+	resp, err := http.Get(server.URL + loginVerifyQRPattern)
+	if err != nil {
+		t.Fatalf("取验证二维码: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("验证二维码状态码 = %d", resp.StatusCode)
+	}
+	head := make([]byte, 8)
+	if _, err := resp.Body.Read(head); err != nil {
+		t.Fatalf("读验证二维码: %v", err)
+	}
+	if string(head[1:4]) != "PNG" {
+		t.Fatalf("验证二维码不是 PNG: % x", head)
+	}
+}
+
+// 60043：页面要给实名/人脸入口（链接来自登录态里的 mid）。
+func TestVerifyPageForFaceAuth(t *testing.T) {
+	server := newVerifyLogin(t, streamStatus{Pending: &pendingVerify{
+		Code:     60043,
+		FaceAuth: "https://www.bilibili.com/blackboard/live/face-auth-middle.html?source_event=400&mid=4987654",
+		At:       time.Now(),
+	}})
+
+	body := getBody(t, server.URL+loginVerifyPattern)
+	if !strings.Contains(body, "实名") || !strings.Contains(body, "mid=4987654") {
+		t.Fatalf("验证页没有给出认证入口:\n%s", body)
+	}
+}
+
+// 模板必须替我们转义：B 站 的文案是不可信输入（回归断言）。
+func TestVerifyPageEscapesRemoteMessage(t *testing.T) {
+	server := newVerifyLogin(t, streamStatus{Pending: &pendingVerify{
+		Code:    60045,
+		Message: `<script>alert(1)</script>` + "未满足开播条件",
+		At:      time.Now(),
+	}})
+
+	body := getBody(t, server.URL+loginVerifyPattern)
+	if strings.Contains(body, "<script>alert(1)</script>") {
+		t.Fatalf("B 站 返回的文案没有被转义:\n%s", body)
+	}
+	if !strings.Contains(body, "&lt;script&gt;") {
+		t.Fatalf("应当转义后原样展示:\n%s", body)
+	}
+	if !strings.Contains(body, "60045") {
+		t.Fatalf("应当展示业务码便于定位:\n%s", body)
+	}
+}
+
+// 已在推流：页面说清楚，并且不再自刷。
+func TestVerifyPageWhileStreaming(t *testing.T) {
+	server := newVerifyLogin(t, streamStatus{Streaming: true})
+
+	body := getBody(t, server.URL+loginVerifyPattern)
+	if !strings.Contains(body, "推流已在进行中") {
+		t.Fatalf("推流中应当明确告知:\n%s", body)
+	}
+	if strings.Contains(body, "http-equiv=\"refresh\"") {
+		t.Fatal("推流中不需要自动刷新")
+	}
+}
+
+// 没有待扫码的验证时，验证二维码端点应当 404，而不是给出空图。
+func TestVerifyQRCodeMissing(t *testing.T) {
+	server := newVerifyLogin(t, streamStatus{})
+
+	resp, err := http.Get(server.URL + loginVerifyQRPattern)
+	if err != nil {
+		t.Fatalf("取验证二维码: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("状态码 = %d, want 404", resp.StatusCode)
+	}
+}
+
+// 账号准入（60045）这类「手机上也做不了什么」的拒绝必须照实显示。
+//
+// 真跑时踩到过：页面只记「需要用户操作」的码，60045 被当成没有 pending，
+// 用户打开验证页只看到「还没有开播记录」——比日志还不如。
+func TestVerifyPageShowsAccountDenial(t *testing.T) {
+	server := newVerifyLogin(t, streamStatus{Pending: &pendingVerify{
+		Code:    60045,
+		Message: "非常抱歉，您账号在当前IP下未满足开播条件（注册时间>30天且粉丝数>500）",
+		At:      time.Now(),
+	}})
+
+	body := getBody(t, server.URL+loginVerifyPattern)
+	if !strings.Contains(body, "60045") || !strings.Contains(body, "未满足开播条件") {
+		t.Fatalf("账号准入被拒应当在页面上说明:\n%s", body)
+	}
+}
+
+// 网络这类没有业务码的失败也要显示，否则同样是「页面什么都不说」。
+func TestVerifyPageShowsPlainFailure(t *testing.T) {
+	server := newVerifyLogin(t, streamStatus{Pending: &pendingVerify{
+		Message: "stream: 请求 B 站接口: dial tcp: i/o timeout",
+		At:      time.Now(),
+	}})
+
+	body := getBody(t, server.URL+loginVerifyPattern)
+	if !strings.Contains(body, "i/o timeout") {
+		t.Fatalf("没有业务码的失败也应当显示:\n%s", body)
+	}
 }

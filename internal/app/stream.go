@@ -29,12 +29,78 @@ type streamRuntime struct {
 	log      *zap.Logger
 	// loginURL 是扫码登录页地址，只在「未登录」提示里用一次。
 	loginURL string
+	// verifyURL 是开播验证页地址（60024 扫码 / 60043 人脸）。
+	verifyURL string
 
 	mu       sync.Mutex
 	streamer *stream.Streamer
 
 	// playing 计数在播报期间不为 0：保活补静音必须让位，否则会把音频时间线撑长
 	playing atomic.Int32
+
+	// streaming 表示 ffmpeg 正在推；pending 是「需要用户在手机上做一步」的状态。
+	// 两者都受 mu 保护，供 /login/verify 读取。
+	streaming bool
+	pending   *pendingVerify
+}
+
+// pendingVerify 是最近一次开播尝试的失败状态。
+//
+// 不只是「需要用户去手机做一步」：像 60045（账号准入）这种没有手机动作可做的拒绝
+// 也要留在页面上——不然用户打开验证页只会看到「还没有开播记录」，比日志还不如。
+type pendingVerify struct {
+	Code     int
+	Message  string
+	QR       string // 60024：用 B 站 App 扫这个地址
+	FaceAuth string // 60043：实名/人脸认证页
+	// NeedsAction 表示这次拒绝要用户在手机上做一步（扫码/刷脸），重试更密。
+	NeedsAction bool
+	At          time.Time
+}
+
+// streamStatus 是推流的当前状态，供验证页展示。
+type streamStatus struct {
+	Streaming bool
+	Pending   *pendingVerify
+}
+
+// Status 返回当前推流状态。
+func (r *streamRuntime) Status() streamStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return streamStatus{Streaming: r.streaming, Pending: r.pending}
+}
+
+// setPending 记录最近一次开播失败（含账号准入这类没有手机动作可做的拒绝）。
+func (r *streamRuntime) setPending(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err == nil {
+		r.pending = nil
+
+		return
+	}
+
+	// 非 StartLiveError 的失败（网络、liveVersion 取不到等）也要显示，只是没有业务码
+	r.pending = &pendingVerify{At: time.Now(), Message: err.Error()}
+
+	var liveErr *stream.StartLiveError
+	if errors.As(err, &liveErr) {
+		r.pending.Code = liveErr.Code
+		r.pending.Message = liveErr.Message
+		r.pending.QR = liveErr.QR
+		r.pending.FaceAuth = liveErr.FaceAuth
+		r.pending.NeedsAction = liveErr.NeedsUserAction()
+	}
+}
+
+// needsUserAction 判断这次失败是不是「等用户在手机上扫码/刷脸」这一类。
+func needsUserAction(err error) bool {
+	var liveErr *stream.StartLiveError
+
+	return errors.As(err, &liveErr) && liveErr.NeedsUserAction()
 }
 
 // provideStream 装配推流链路；未启用 [stream] 时返回 nil。
@@ -53,10 +119,11 @@ func provideStream(cfg *config.Config, log *zap.Logger) (*streamRuntime, error) 
 	stream.SetLogger(log)
 
 	runtime := &streamRuntime{
-		cfg:      s,
-		live:     stream.LiveConfig{RoomID: s.RoomID, AreaID: s.AreaID},
-		loginURL: loginURL(cfg.Server.Addr),
-		log:      log,
+		cfg:       s,
+		live:      stream.LiveConfig{RoomID: s.RoomID, AreaID: s.AreaID},
+		loginURL:  loginURL(cfg.Server.Addr),
+		verifyURL: verifyURL(cfg.Server.Addr),
+		log:       log,
 	}
 
 	// renderer 的零值是 false，最容易配漏：screen 模式又不自备显示时，ffmpeg 会以
@@ -96,6 +163,11 @@ func loginURL(addr string) string {
 	return hostURL(addr) + loginPagePattern
 }
 
+// verifyURL 是开播验证页地址（60024 扫码 / 60043 人脸）。
+func verifyURL(addr string) string {
+	return hostURL(addr) + loginVerifyPattern
+}
+
 // hostURL 把监听地址换成浏览器能访问的地址：":8080" → "http://127.0.0.1:8080"。
 //
 // 监听 0.0.0.0 时不能照抄给浏览器；登录页本来就只允许本机访问，用回环地址最稳。
@@ -112,11 +184,51 @@ func hostURL(addr string) string {
 	return fmt.Sprintf("http://%s:%s", host, port)
 }
 
-// Run 解析推流地址、起画面与 ffmpeg，阻塞到 ctx 取消。
+// Run 持续维持推流：开播这一步失败会重试，退避由短到长。
+//
+// 与 streamer 自己的重启分工不同：那一层管 ffmpeg 中途掉线，这一层管「开播没成」。
+// 没有它，一次风控、一次开播验证、一次网络抖动就会让推流永久停摆（实测被 60045 卡过）。
 func (r *streamRuntime) Run(ctx context.Context) error {
+	backoff := startRetryInitial
+
+	for {
+		started, err := r.runOnce(ctx)
+
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		wait := backoff
+		if started {
+			// 开播成功过又退出来是运行期故障：退避重置，别背着旧账
+			backoff = startRetryInitial
+			wait = startRetryInitial
+		} else {
+			backoff = min(backoff*2, startRetryMax)
+		}
+		if needsUserAction(err) {
+			// 用户正在手机上扫码/刷脸，等短一点好接上
+			wait = verifyRetryInterval
+		}
+
+		r.log.Sugar().Warnf("推流未建立，%s 后重试: %v", wait, err)
+		if needsUserAction(err) {
+			r.log.Sugar().Infof("需要你在手机上完成验证，完成后会自动继续: %s", r.verifyURL)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+}
+
+// runOnce 走一遍完整链路：开播 → 起画面 → 推流；返回是否成功开播过。
+func (r *streamRuntime) runOnce(ctx context.Context) (bool, error) {
 	output, started, err := r.resolveOutput(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if started {
 		defer r.stopLive()
@@ -136,23 +248,26 @@ func (r *streamRuntime) Run(ctx context.Context) error {
 		RestartWait:  r.cfg.RestartWait,
 	})
 	if err != nil {
-		return err
+		return started, err
 	}
 	defer streamer.Close()
 
 	r.mu.Lock()
 	r.streamer = streamer
+	r.streaming = true
+	r.pending = nil
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
 		r.streamer = nil
+		r.streaming = false
 		r.mu.Unlock()
 	}()
 
 	// 画面先起来再推：抓一块还没画出来的屏，前几秒是黑的
 	if r.renderer != nil {
 		if err := r.renderer.Start(ctx); err != nil {
-			return err
+			return started, err
 		}
 		defer r.renderer.Stop()
 	}
@@ -160,7 +275,7 @@ func (r *streamRuntime) Run(ctx context.Context) error {
 	// 音频保活与 ffmpeg 同时起停
 	go r.silenceKeepalive(ctx)
 
-	return streamer.Run(ctx)
+	return started, streamer.Run(ctx)
 }
 
 // resolveOutput 决定推流地址：给了 output 就用它，否则调开播接口拿。
@@ -182,8 +297,11 @@ func (r *streamRuntime) resolveOutput(ctx context.Context) (output string, start
 
 	info, err := stream.StartLive(ctx, live)
 	if err != nil {
+		r.setPending(err)
+
 		return "", false, err
 	}
+	r.setPending(nil)
 	r.log.Sugar().Infof("已开播: 直播间 %d", live.RoomID)
 
 	return info.Output(), true, nil
@@ -191,6 +309,14 @@ func (r *streamRuntime) resolveOutput(ctx context.Context) (output string, start
 
 // cookieWaitInterval 是等待扫码登录的轮询间隔。
 const cookieWaitInterval = 5 * time.Second
+
+// 开播阶段失败的重试退避：从 30 秒起翻倍，5 分钟封顶。
+const (
+	startRetryInitial = 30 * time.Second
+	startRetryMax     = 5 * time.Minute
+	// verifyRetryInterval 是「等用户在手机上扫码/刷脸」时的重试间隔。
+	verifyRetryInterval = 15 * time.Second
+)
 
 // waitForCookie 要一个可用的登录态：配置里填了就用它，否则读扫码登录落盘的文件。
 //

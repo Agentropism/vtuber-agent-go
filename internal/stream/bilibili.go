@@ -119,15 +119,9 @@ func StartLive(ctx context.Context, cfg LiveConfig) (LiveInfo, error) {
 	}
 
 	var payload struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Data    *struct {
-			QR   string `json:"qr"`
-			RTMP struct {
-				Addr string `json:"addr"`
-				Code string `json:"code"`
-			} `json:"rtmp"`
-		} `json:"data"`
+		Code    int            `json:"code"`
+		Message string         `json:"message"`
+		Data    *startLiveData `json:"data"`
 	}
 	if err := json.Unmarshal(resp, &payload); err != nil {
 		return LiveInfo{}, fmt.Errorf("stream: 解析开播响应: %w", err)
@@ -135,12 +129,16 @@ func StartLive(ctx context.Context, cfg LiveConfig) (LiveInfo, error) {
 
 	switch payload.Code {
 	case 0:
-	case liveCodeNeedVerify:
-		return LiveInfo{}, fmt.Errorf("stream: 开播需要扫码/人脸验证，请在浏览器里完成后再启动（验证链接: %s）", payload.Data.QR)
-	case liveCodeNeedRealName:
-		return LiveInfo{}, errors.New("stream: 开播需要先完成实名认证")
+	case liveCodeNeedVerify, liveCodeNeedRealName:
+		// 这两类不是「配置写错了」，是要用户拿手机做一步，必须把入口带出去
+		return LiveInfo{}, &StartLiveError{
+			Code:     payload.Code,
+			Message:  payload.Message,
+			QR:       qrOf(payload.Data),
+			FaceAuth: faceAuthURL(cfg.Cookie),
+		}
 	default:
-		return LiveInfo{}, fmt.Errorf("stream: 开播失败(%d): %s", payload.Code, payload.Message)
+		return LiveInfo{}, &StartLiveError{Code: payload.Code, Message: payload.Message}
 	}
 
 	if payload.Data == nil || payload.Data.RTMP.Addr == "" {
@@ -148,6 +146,65 @@ func StartLive(ctx context.Context, cfg LiveConfig) (LiveInfo, error) {
 	}
 
 	return LiveInfo{Addr: payload.Data.RTMP.Addr, Key: payload.Data.RTMP.Code}, nil
+}
+
+// startLiveData 是 startLive 的 data 段：成功时给 rtmp，要验证时给 qr。
+type startLiveData struct {
+	QR   string `json:"qr"`
+	RTMP struct {
+		Addr string `json:"addr"`
+		Code string `json:"code"`
+	} `json:"rtmp"`
+}
+
+// StartLiveError 是开播被拒的结构化错误。
+//
+// 带上业务码与 B 站 给的验证入口：60024（要扫码验证）与 60043（要实名/人脸）不是
+// 「配置写错了」，而是要用户拿手机做一步。只丢一句日志等于把用户堵在死胡同里。
+type StartLiveError struct {
+	Code    int
+	Message string
+	// QR 是 60024 时给用户扫的地址。
+	QR string
+	// FaceAuth 是 60043 时的实名/人脸认证页（带登录态里的 mid）。
+	FaceAuth string
+}
+
+func (e *StartLiveError) Error() string {
+	switch e.Code {
+	case liveCodeNeedVerify:
+		return "stream: 开播需要扫码验证（用 B 站 App 扫 /login/verify 上的二维码）"
+	case liveCodeNeedRealName:
+		return "stream: 开播需要先完成实名/人脸认证: " + e.FaceAuth
+	default:
+		return fmt.Sprintf("stream: 开播失败(%d): %s", e.Code, e.Message)
+	}
+}
+
+// NeedsUserAction 表示这次拒绝需要用户在手机上做一步，重试间隔该短一些。
+func (e *StartLiveError) NeedsUserAction() bool {
+	return e.Code == liveCodeNeedVerify || e.Code == liveCodeNeedRealName
+}
+
+// qrOf 取 60024 的验证地址；data 可能是 nil（别的码不保证带 data）。
+func qrOf(data *startLiveData) string {
+	if data == nil {
+		return ""
+	}
+
+	return data.QR
+}
+
+// faceAuthURL 拼直播实名/人脸认证页；mid 取自登录态里的 DedeUserID。
+//
+// 地址与 bili-live-hime 用的同一个（source_event=400 是「开播需要认证」这个入口）。
+func faceAuthURL(cookie string) string {
+	const base = "https://www.bilibili.com/blackboard/live/face-auth-middle.html?source_event=400"
+	if mid := cookieValueFor(cookie, "DedeUserID"); mid != "" {
+		return base + "&mid=" + url.QueryEscape(mid)
+	}
+
+	return base
 }
 
 // StopLive 关播。进程退出时调用，避免直播间挂着「直播中」。
@@ -197,9 +254,14 @@ func liveVersion(ctx context.Context, cfg LiveConfig) (version string, build str
 
 // csrf 从 cookie 里取 bili_jct，B 站写接口都要它。
 func csrf(cookie string) string {
+	return cookieValueFor(cookie, "bili_jct")
+}
+
+// cookieValueFor 从 Cookie 串里取某一项的值。
+func cookieValueFor(cookie, name string) string {
 	for _, part := range strings.Split(cookie, ";") {
-		name, value, found := strings.Cut(strings.TrimSpace(part), "=")
-		if found && name == "bili_jct" {
+		key, value, found := strings.Cut(strings.TrimSpace(part), "=")
+		if found && key == name {
 			return value
 		}
 	}

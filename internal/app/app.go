@@ -69,7 +69,7 @@ func Initialize() (*App, error) {
 	}
 
 	// 扫码登录：只为推流取开播凭据，未启用 [stream] 时为 nil
-	login := provideLogin(cfg, log)
+	login := provideLogin(cfg, log, streaming)
 	if login != nil {
 		log.Sugar().Infof("扫码登录页（仅本机可访问）: %s", loginURL(cfg.Server.Addr))
 	}

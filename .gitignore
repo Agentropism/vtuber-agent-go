@@ -12,3 +12,7 @@ data/
 .pi/
 .claude/
 .codegraph/
+
+# 运行时配置的备份：同样含凭据，绝不能进仓库
+config.toml.bak
+config.toml.*.bak

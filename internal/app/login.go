@@ -3,10 +3,11 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"html/template"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,9 +26,11 @@ import (
 // 三个端点全部**只允许本机访问**（回环地址）：二维码一被扫就绑定账号，
 // 把开播权限暴露到局域网没有任何理由。
 const (
-	loginPagePattern   = "/login/"
-	loginQRCodePattern = "/login/qrcode.png"
-	loginStatusPattern = "/login/status"
+	loginPagePattern     = "/login/"
+	loginQRCodePattern   = "/login/qrcode.png"
+	loginStatusPattern   = "/login/status"
+	loginVerifyPattern   = "/login/verify"
+	loginVerifyQRPattern = "/login/verify.png"
 
 	// loginQRCodeTTL 是二维码自认为的新鲜期；B 站 侧的过期时间约 180s，
 	// 这里留一点余量，过期后重新申请。
@@ -44,6 +47,8 @@ const (
 type loginService struct {
 	cfg config.StreamConfig
 	log *zap.Logger
+	// stream 用于读推流状态（是否在推、是否需要用户在手机上做一步）。
+	stream *streamRuntime
 	// api 指向 B 站 passport 接口；测试注入 httptest 地址，生产留空用官方地址。
 	api stream.LoginConfig
 
@@ -55,14 +60,15 @@ type loginService struct {
 }
 
 // provideLogin 装配扫码登录；未启用推流时返回 nil（登录只为拿开播凭据，别的地方用不上）。
-func provideLogin(cfg *config.Config, log *zap.Logger) *loginService {
+func provideLogin(cfg *config.Config, log *zap.Logger, streaming *streamRuntime) *loginService {
 	if !cfg.Stream.Enabled {
 		return nil
 	}
 
 	return &loginService{
-		cfg: cfg.Stream,
-		log: log,
+		cfg:    cfg.Stream,
+		log:    log,
+		stream: streaming,
 		// 启动时先把已登录的凭据读进来，省一次"未登录"的误报
 		cookie: stream.LoadLoginCookie(cookiePath(cfg.Stream)),
 	}
@@ -91,6 +97,8 @@ func (s *loginService) routes() []server.Route {
 		{Pattern: loginPagePattern, Handler: loopbackOnly(loginPageHandler())},
 		{Pattern: loginQRCodePattern, Handler: loopbackOnly(s.qrcodeHandler())},
 		{Pattern: loginStatusPattern, Handler: loopbackOnly(s.statusHandler())},
+		{Pattern: loginVerifyPattern, Handler: loopbackOnly(s.verifyHandler())},
+		{Pattern: loginVerifyQRPattern, Handler: loopbackOnly(s.verifyQRHandler())},
 	}
 }
 
@@ -236,11 +244,19 @@ func loginPageHandler() http.Handler {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write([]byte(loginPageHTML))
+		// 走 html/template 而不是手拼字符串：页面上的数据（B 站 的文案、链接）交给
+		// 模板转义，比自己记得 html.EscapeString 可靠。
+		// 静态页面，Execute 只可能因写响应失败而报错，这里没有可做的补救。
+		_ = loginPageTmpl.Execute(w, nil)
 	})
 }
 
 // loginPageHTML 是自带样式的最小登录页，无外部依赖（二维码由后端出 PNG）。
+//
+// 页面无动态数据，但仍然走 html/template：与验证页同一套路，
+// 将来往里加数据时不必再想「这里要不要转义」。
+var loginPageTmpl = template.Must(template.New("login").Parse(loginPageHTML))
+
 const loginPageHTML = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -329,5 +345,130 @@ const loginPageHTML = `<!DOCTYPE html>
 </html>
 `
 
-// errLoginDisabled 在未启用推流时由调用方使用（保持错误文案一致）。
-var errLoginDisabled = errors.New("未启用 [stream]，登录页不可用")
+// verifyHandler 出开播验证页：60024 给可扫的二维码，60043 给实名/人脸入口。
+//
+// 页面在未推流时每 3 秒自刷：用户扫码/刷脸完成后能自己看到状态变化。参考项目是
+// 「扫码后请手动关闭对话框再点一次开始」，我们做无人值守，不能要求人守在那儿点。
+func (s *loginService) verifyHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != loginVerifyPattern {
+			http.NotFound(w, r)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		if err := verifyPageTmpl.Execute(w, verifyView(s.status())); err != nil {
+			s.log.Sugar().Warnf("渲染验证页失败: %v", err)
+		}
+	})
+}
+
+// verifyQRHandler 把 60024 的验证地址出成二维码 PNG。
+func (s *loginService) verifyQRHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status := s.status()
+		if status.Pending == nil || status.Pending.QR == "" {
+			http.Error(w, "当前没有需要扫码的验证", http.StatusNotFound)
+			return
+		}
+
+		// 这里是二进制 PNG，不是 HTML，直接写响应体是安全的
+		png, err := qrcode.Encode(status.Pending.QR, qrcode.Medium, loginQRCodeSize)
+		if err != nil {
+			http.Error(w, "生成二维码失败: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(png)
+	})
+}
+
+// status 读推流状态；没有推流链路时返回零值。
+func (s *loginService) status() streamStatus {
+	if s.stream == nil {
+		return streamStatus{}
+	}
+
+	return s.stream.Status()
+}
+
+// verifyViewData 是验证页的模板数据。
+type verifyViewData struct {
+	AutoRefresh bool
+	Streaming   bool
+	QRURL       string
+	FaceAuth    string
+	LastCode    int
+	LastMessage string
+}
+
+// verifyView 把推流状态翻译成模板数据。
+func verifyView(status streamStatus) verifyViewData {
+	data := verifyViewData{Streaming: status.Streaming, AutoRefresh: !status.Streaming}
+	if status.Pending == nil {
+		return data
+	}
+
+	data.FaceAuth = status.Pending.FaceAuth
+	data.LastCode = status.Pending.Code
+	data.LastMessage = status.Pending.Message
+	if status.Pending.QR != "" {
+		// 带时间戳：二维码内容会变，别让浏览器拿缓存里的旧图
+		data.QRURL = loginVerifyQRPattern + "?t=" + strconv.FormatInt(status.Pending.At.Unix(), 10)
+	}
+
+	return data
+}
+
+// verifyPageHTML 是验证页模板。
+//
+// 用 html/template：B 站 返回的文案与链接会进页面，转义交给模板，
+// 不给自己「忘了转义」的机会（FaceAuth 是我们自己拼的 https 链接，也一样过模板）。
+var verifyPageTmpl = template.Must(template.New("verify").Parse(`<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>开播验证</title>
+{{if .AutoRefresh}}<meta http-equiv="refresh" content="3">{{end}}
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #14161a; color: #e8eaf0; font: 14px/1.6 system-ui, -apple-system, "Noto Sans SC", sans-serif; }
+  .card { background: #1c1f26; border: 1px solid #2a2f3a; border-radius: 14px; padding: 28px 32px;
+          text-align: center; max-width: 420px; }
+  h1 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
+  .qr { width: 240px; height: 240px; background: #fff; border-radius: 10px; padding: 10px;
+        display: block; margin: 16px auto 0; }
+  .hint { color: #8b93a7; font-size: 13px; }
+  .ok { color: #4ade80; }
+  .err { color: #f87171; }
+  a { color: #7dd3fc; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>开播验证</h1>
+    {{if .Streaming}}
+      <p class="ok">推流已在进行中，无需操作。</p>
+      <p><a href="/web/">打开画面页</a></p>
+    {{else if .QRURL}}
+      <p>本次开播需要身份验证：用<b>哔哩哔哩 App</b> 扫码完成，完成后这里会自动继续。</p>
+      <img class="qr" src="{{.QRURL}}" alt="验证二维码">
+    {{else if .FaceAuth}}
+      <p>本次开播需要先完成<b>实名/人脸认证</b>：</p>
+      <p><a href="{{.FaceAuth}}" target="_blank" rel="noreferrer">在手机上打开认证页面</a></p>
+      <p class="hint">完成认证后这里会自动继续。</p>
+    {{else if .LastMessage}}
+      <p class="err">{{if .LastCode}}开播被拒（{{.LastCode}}）：{{end}}{{.LastMessage}}</p>
+      <p class="hint">服务会按退避继续重试；上面若提示需要在手机上验证，完成后会自动接上。</p>
+    {{else}}
+      <p>还没有开播记录。若尚未登录，先去 <a href="/login/">扫码登录</a>。</p>
+    {{end}}
+    <p class="hint"><a href="/login/">登录页</a></p>
+  </div>
+</body>
+</html>
+`))

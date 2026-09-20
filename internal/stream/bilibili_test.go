@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -96,10 +97,58 @@ func TestStartLiveSendsSignedFormAndParsesAddress(t *testing.T) {
 }
 
 // 需要扫码/人脸时要说人话，别只丢一个错误码。
+// 需要扫码/实名时要把「验证入口」结构化地带出来，而不是只丢一句给人看的话。
 func TestStartLiveSurfacesVerifyCode(t *testing.T) {
+	cases := []struct {
+		name     string
+		code     int
+		data     string
+		wantQR   string
+		wantFace bool
+	}{
+		{"需要扫码验证", 60024, `"data":{"qr":"https://example.com/qr"}`, "https://example.com/qr", false},
+		{"需要实名认证", 60043, `"data":null`, "", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "startLive") {
+					_, _ = w.Write([]byte(`{"code":` + itoa(tc.code) + `,"message":"need verify",` + tc.data + `}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"code":0,"data":{"curr_version":"1.2.3","build":4567}}`))
+			}))
+			defer server.Close()
+
+			_, err := StartLive(context.Background(), LiveConfig{
+				Cookie:  "SESSDATA=s1; bili_jct=j1; DedeUserID=4987654",
+				RoomID:  1,
+				BaseURL: server.URL,
+			})
+
+			var liveErr *StartLiveError
+			if !errors.As(err, &liveErr) {
+				t.Fatalf("应当返回结构化错误，得到 %v", err)
+			}
+			if liveErr.Code != tc.code || !liveErr.NeedsUserAction() {
+				t.Fatalf("错误码或类型不对: %+v", liveErr)
+			}
+			if liveErr.QR != tc.wantQR {
+				t.Fatalf("扫码地址 = %q, want %q", liveErr.QR, tc.wantQR)
+			}
+			if tc.wantFace && !strings.Contains(liveErr.FaceAuth, "mid=4987654") {
+				t.Fatalf("实名认证链接没带上 mid: %q", liveErr.FaceAuth)
+			}
+		})
+	}
+}
+
+// 不认识的码（比如账号准入 60045）也要结构化返回；data 为 nil 时不能崩。
+func TestStartLiveUnknownCodeWithNilData(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "startLive") {
-			_, _ = w.Write([]byte(`{"code":60024,"message":"need verify","data":{"qr":"https://example.com/qr"}}`))
+			_, _ = w.Write([]byte(`{"code":60045,"message":"未满足开播条件"}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"code":0,"data":{"curr_version":"1.2.3","build":4567}}`))
@@ -107,11 +156,16 @@ func TestStartLiveSurfacesVerifyCode(t *testing.T) {
 	defer server.Close()
 
 	_, err := StartLive(context.Background(), LiveConfig{Cookie: "bili_jct=j1", RoomID: 1, BaseURL: server.URL})
-	if err == nil {
-		t.Fatal("需要验证时应当报错")
+
+	var liveErr *StartLiveError
+	if !errors.As(err, &liveErr) {
+		t.Fatalf("应当返回结构化错误，得到 %v", err)
 	}
-	if !strings.Contains(err.Error(), "扫码") || !strings.Contains(err.Error(), "https://example.com/qr") {
-		t.Fatalf("错误信息没有给出验证链接: %v", err)
+	if liveErr.Code != 60045 || liveErr.NeedsUserAction() {
+		t.Fatalf("60045 不该被当成需要用户操作: %+v", liveErr)
+	}
+	if !strings.Contains(err.Error(), "未满足开播条件") {
+		t.Fatalf("应当带上 B 站 的原话: %v", err)
 	}
 }
 
