@@ -137,12 +137,15 @@ func PollLogin(ctx context.Context, cfg LoginConfig, key string) (LoginResult, e
 
 	switch payload.Data.Code {
 	case loginCodeSuccess:
-		if missing := missingLoginCookies(cookies); len(missing) > 0 {
+		// 带上 jar 里的 cookie：指纹 cookie（buvid3 等）通常在 generate 阶段就下发，
+		// 只留 poll 响应里的那几个，请求看起来还是陌生设备。
+		all := append(jarCookies(cfg.Client, base), cookies...)
+		if missing := missingLoginCookies(all); len(missing) > 0 {
 			// 必需项缺失：当成失败，不能揣着半个凭据往下走
 			return LoginResult{}, fmt.Errorf("stream: 登录已确认但缺少 %s", strings.Join(missing, "、"))
 		}
 
-		return LoginResult{State: LoginConfirmed, Cookie: cookieValue(cookies), Message: "登录成功"}, nil
+		return LoginResult{State: LoginConfirmed, Cookie: cookieValue(all), Message: "登录成功"}, nil
 	case loginCodeScanned:
 		return LoginResult{State: LoginScanned, Message: payload.Data.Message}, nil
 	case loginCodeExpired:
@@ -173,6 +176,35 @@ func cookieValue(cookies []*http.Cookie) string {
 	}
 
 	return strings.Join(parts, "; ")
+}
+
+// jarCookies 取 jar 里与登录相关的 cookie。
+//
+// 不能只按 base 查：Set-Cookie 没写 Path 时，jar 会按「请求路径的目录」给 cookie 定作用域
+// （RFC 6265 的默认路径），而 generate 的路径是 /x/passport-login/web/qrcode/generate。
+// 三个 URL 都查一遍再合并，指纹 cookie 才不会漏（这条是测试逼出来的）。
+func jarCookies(client *http.Client, base string) []*http.Cookie {
+	if client == nil || client.Jar == nil {
+		return nil
+	}
+
+	var out []*http.Cookie
+	seen := make(map[string]bool)
+	for _, raw := range []string{base, base + loginGeneratePath, base + loginPollPath} {
+		parsed, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		for _, cookie := range client.Jar.Cookies(parsed) {
+			if seen[cookie.Name] {
+				continue
+			}
+			seen[cookie.Name] = true
+			out = append(out, cookie)
+		}
+	}
+
+	return out
 }
 
 // missingLoginCookies 列出登录必需但没拿到的 cookie。

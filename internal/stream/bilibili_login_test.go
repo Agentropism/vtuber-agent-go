@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -172,4 +173,46 @@ func itoa(n int) string {
 	}
 
 	return sign + string(digits)
+}
+
+// 带 jar 的客户端必须把 generate 阶段下发的指纹 cookie 一起带进最终凭据。
+//
+// 这是「请求看起来像不像同一个浏览器会话」的关键：只留 poll 响应里的凭据，
+// buvid3 这类设备指纹就丢了，请求会以陌生设备身份出现。
+func TestLoginKeepsFingerprintCookieFromGenerate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/generate"):
+			http.SetCookie(w, &http.Cookie{Name: "buvid3", Value: "fp-1"})
+			_, _ = w.Write([]byte(`{"code":0,"data":{"url":"https://example.com/h5","qrcode_key":"k1"}}`))
+		case strings.HasSuffix(r.URL.Path, "/poll"):
+			// 这条响应只给凭据，指纹 cookie 是上一步给的
+			http.SetCookie(w, &http.Cookie{Name: "SESSDATA", Value: "sess"})
+			http.SetCookie(w, &http.Cookie{Name: "bili_jct", Value: "jct"})
+			_, _ = w.Write([]byte(`{"code":0,"data":{"code":0,"message":"ok"}}`))
+		default:
+			t.Errorf("意外的路径: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("创建 jar: %v", err)
+	}
+	cfg := LoginConfig{BaseURL: server.URL, Client: &http.Client{Jar: jar}}
+
+	if _, err := GenerateLoginQRCode(context.Background(), cfg); err != nil {
+		t.Fatalf("申请二维码: %v", err)
+	}
+	result, err := PollLogin(context.Background(), cfg, "k1")
+	if err != nil {
+		t.Fatalf("轮询: %v", err)
+	}
+
+	for _, want := range []string{"SESSDATA=sess", "bili_jct=jct", "buvid3=fp-1"} {
+		if !strings.Contains(result.Cookie, want) {
+			t.Fatalf("最终凭据缺少 %q: %q", want, result.Cookie)
+		}
+	}
 }

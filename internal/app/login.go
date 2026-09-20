@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +52,9 @@ type loginService struct {
 	stream *streamRuntime
 	// api 指向 B 站 passport 接口；测试注入 httptest 地址，生产留空用官方地址。
 	api stream.LoginConfig
+	// client 带 cookie jar：登录要跨 generate / poll 两个请求累积 cookie，
+	// 指纹 cookie（buvid3 等）就在 generate 阶段下发。
+	client *http.Client
 
 	mu      sync.Mutex
 	qr      stream.LoginQRCode
@@ -65,10 +69,17 @@ func provideLogin(cfg *config.Config, log *zap.Logger, streaming *streamRuntime)
 		return nil
 	}
 
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		// 退化成不带 jar：登录仍可用，只是拿不到 generate 阶段下发的指纹 cookie
+		log.Sugar().Warnf("创建 cookie jar 失败: %v", err)
+	}
+
 	return &loginService{
 		cfg:    cfg.Stream,
 		log:    log,
 		stream: streaming,
+		client: &http.Client{Timeout: 15 * time.Second, Jar: jar},
 		// 启动时先把已登录的凭据读进来，省一次"未登录"的误报
 		cookie: stream.LoadLoginCookie(cookiePath(cfg.Stream)),
 	}
@@ -81,6 +92,16 @@ func cookiePath(s config.StreamConfig) string {
 	}
 
 	return defaultCookieFile
+}
+
+// loginConfig 把服务持有的 jar 客户端挂到登录请求上；测试注入的 api.Client 优先。
+func (s *loginService) loginConfig() stream.LoginConfig {
+	cfg := s.api
+	if cfg.Client == nil {
+		cfg.Client = s.client
+	}
+
+	return cfg
 }
 
 // Cookie 返回可用的登录态；没有则返回空串。
@@ -137,7 +158,7 @@ func (s *loginService) statusHandler() http.Handler {
 			return
 		}
 
-		result, err := stream.PollLogin(r.Context(), s.api, qr.Key)
+		result, err := stream.PollLogin(r.Context(), s.loginConfig(), qr.Key)
 		if err != nil {
 			writeLoginStatus(w, loginStatusPayload{State: "error", Message: err.Error()})
 			return
@@ -185,7 +206,7 @@ func (s *loginService) ensureQRCodeLocked(ctx context.Context) (stream.LoginQRCo
 		return s.qr, nil
 	}
 
-	qr, err := stream.GenerateLoginQRCode(ctx, s.api)
+	qr, err := stream.GenerateLoginQRCode(ctx, s.loginConfig())
 	if err != nil {
 		return stream.LoginQRCode{}, err
 	}
