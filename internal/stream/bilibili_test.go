@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 签名的黄金值由 python 独立算得（hashlib.md5 + urlencode 排序）：
@@ -211,21 +212,109 @@ func TestStartLiveGuardsBeforeRequest(t *testing.T) {
 	}
 }
 
-func TestStopLivePostsCSRF(t *testing.T) {
+func TestStopLivePostsFormAndConfirmsOffline(t *testing.T) {
 	var body url.Values
+	stops := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		body, _ = url.ParseQuery(string(raw))
-		_, _ = w.Write([]byte(`{"code":0,"data":[]}`))
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/stopLive"):
+			stops++
+			raw, _ := io.ReadAll(r.Body)
+			body, _ = url.ParseQuery(string(raw))
+			_, _ = w.Write([]byte(`{"code":0,"message":"0"}`))
+		case strings.HasSuffix(r.URL.Path, "/get_info"):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"live_status":0}}`))
+		default:
+			t.Errorf("意外的路径: %s", r.URL.Path)
+		}
 	}))
 	defer server.Close()
 
 	if err := StopLive(context.Background(), LiveConfig{Cookie: "bili_jct=j1", RoomID: 99, BaseURL: server.URL}); err != nil {
 		t.Fatalf("关播: %v", err)
 	}
+	if stops != 1 {
+		t.Fatalf("确认已下线就不该重试，实际调用 %d 次", stops)
+	}
 	if body.Get("room_id") != "99" || body.Get("csrf") != "j1" || body.Get("platform") != "pc_link" {
 		t.Fatalf("关播表单不对: %v", body)
 	}
+}
+
+// 只看 HTTP 状态会把失败当成功：业务码必须检查。
+//
+// 实测踩到过——日志写「已关播」而 B 站侧 live_status 仍是 1，查根因时被假日志挡了一轮。
+func TestStopLiveReportsBusinessError(t *testing.T) {
+	defer shrinkStopLiveRetry()() // 否则这条要真的等 3×2 秒
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"code":-400,"message":"请求错误"}`))
+	}))
+	defer server.Close()
+
+	err := StopLive(context.Background(), LiveConfig{Cookie: "bili_jct=j1", RoomID: 99, BaseURL: server.URL})
+	if err == nil || !strings.Contains(err.Error(), "关播被拒") {
+		t.Fatalf("业务码非 0 应当报错: %v", err)
+	}
+}
+
+// 接口说成功但房间还挂着：要重试到确认下线为止。
+func TestStopLiveRetriesUntilOffline(t *testing.T) {
+	defer shrinkStopLiveRetry()()
+
+	stops, infos := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/stopLive") {
+			stops++
+			_, _ = w.Write([]byte(`{"code":0,"message":"0"}`))
+
+			return
+		}
+		infos++
+		if infos == 1 {
+			// 第一次查还挂着（刚断流时 B 站 可能还没算下线）
+			_, _ = w.Write([]byte(`{"code":0,"data":{"live_status":1}}`))
+
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":{"live_status":0}}`))
+	}))
+	defer server.Close()
+
+	if err := StopLive(context.Background(), LiveConfig{Cookie: "bili_jct=j1", RoomID: 99, BaseURL: server.URL}); err != nil {
+		t.Fatalf("关播: %v", err)
+	}
+	if stops < 2 {
+		t.Fatalf("应当重试关播，实际 %d 次", stops)
+	}
+}
+
+// 一直挂着就报错，不能假装成功。
+func TestStopLiveFailsWhenRoomStaysLive(t *testing.T) {
+	defer shrinkStopLiveRetry()()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/stopLive") {
+			_, _ = w.Write([]byte(`{"code":0,"message":"0"}`))
+
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":{"live_status":1}}`))
+	}))
+	defer server.Close()
+
+	err := StopLive(context.Background(), LiveConfig{Cookie: "bili_jct=j1", RoomID: 99, BaseURL: server.URL})
+	if err == nil || !strings.Contains(err.Error(), "仍显示直播中") {
+		t.Fatalf("一直挂着应当报错: %v", err)
+	}
+}
+
+// shrinkStopLiveRetry 把重试压到毫秒级：测试不该真的等 2 秒。
+func shrinkStopLiveRetry() func() {
+	oldInterval, oldAttempts := stopLiveRetryInterval, stopLiveAttempts
+	stopLiveRetryInterval = time.Millisecond
+	stopLiveAttempts = 3
+
+	return func() { stopLiveRetryInterval, stopLiveAttempts = oldInterval, oldAttempts }
 }
 
 // 推流地址拼法：B 站 的 rtmp.code 是整段查询串（以 ? 开头），别再给它加 &key=。

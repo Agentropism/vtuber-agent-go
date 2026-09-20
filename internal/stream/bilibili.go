@@ -34,6 +34,12 @@ const (
 	liveCodeNeedRealName = 60043
 )
 
+// 关播重试：次数与间隔是变量，测试里可以调小（别真的等 2 秒）。
+var (
+	stopLiveAttempts      = 3
+	stopLiveRetryInterval = 2 * time.Second
+)
+
 // LiveConfig 是开播所需的最小信息。
 type LiveConfig struct {
 	// Cookie 是浏览器 Cookie，至少含 SESSDATA 与 bili_jct。凭据不进仓库。
@@ -225,19 +231,86 @@ func faceAuthURL(cookie string) string {
 	return base
 }
 
-// StopLive 关播。进程退出时调用，避免直播间挂着「直播中」。
+// StopLive 关播：先调接口，再**确认直播间真的下线**，不行就重试。
+//
+// 为什么不能调一次就算完（两条都是实测踩出来的）：
+//  1. 只看 HTTP 状态会把失败当成功——日志写「已关播」而 B 站侧 live_status 仍是 1，
+//     查根因时被这条假日志挡了一轮，所以必须检查业务码；
+//  2. 刚断流就调接口，B 站 可能还没把发布者算下线，接口收下但不生效（隔几十秒再调才变 0）。
 func StopLive(ctx context.Context, cfg LiveConfig) error {
 	values := url.Values{}
 	values.Set("room_id", strconv.FormatInt(cfg.RoomID, 10))
 	values.Set("platform", "pc_link")
 	values.Set("csrf", csrf(cfg.Cookie))
 	values.Set("csrf_token", csrf(cfg.Cookie))
+	body := values.Encode()
 
-	if _, err := postForm(ctx, cfg, "/room/v1/Room/stopLive", values.Encode()); err != nil {
+	var lastErr error
+	for attempt := 1; attempt <= stopLiveAttempts; attempt++ {
+		if err := stopLiveOnce(ctx, cfg, body); err != nil {
+			lastErr = err
+		} else if live, err := roomLive(ctx, cfg); err != nil {
+			lastErr = err
+		} else if !live {
+			return nil // 确认下线
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(stopLiveRetryInterval):
+		}
+	}
+
+	if lastErr != nil {
+		return lastErr
+	}
+
+	return errors.New("stream: 关播接口返回成功，但直播间仍显示直播中")
+}
+
+// stopLiveOnce 调一次关播接口，并**按业务码**判断成败。
+func stopLiveOnce(ctx context.Context, cfg LiveConfig, body string) error {
+	resp, err := postForm(ctx, cfg, "/room/v1/Room/stopLive", body)
+	if err != nil {
 		return fmt.Errorf("stream: 关播失败: %w", err)
 	}
 
+	var payload struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(resp, &payload); err != nil {
+		return fmt.Errorf("stream: 解析关播响应: %w", err)
+	}
+	if payload.Code != 0 {
+		return fmt.Errorf("stream: 关播被拒(%d): %s", payload.Code, payload.Message)
+	}
+
 	return nil
+}
+
+// roomLive 查直播间是否仍在直播中。
+func roomLive(ctx context.Context, cfg LiveConfig) (bool, error) {
+	resp, err := getJSON(ctx, cfg, "/room/v1/Room/get_info?room_id="+strconv.FormatInt(cfg.RoomID, 10))
+	if err != nil {
+		return false, err
+	}
+
+	var payload struct {
+		Code int `json:"code"`
+		Data *struct {
+			LiveStatus int `json:"live_status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp, &payload); err != nil {
+		return false, fmt.Errorf("stream: 解析直播间信息: %w", err)
+	}
+	if payload.Code != 0 || payload.Data == nil {
+		return false, fmt.Errorf("stream: 取直播间信息失败(%d)", payload.Code)
+	}
+
+	return payload.Data.LiveStatus == 1, nil
 }
 
 // liveVersion 取 web 客户端当前版本号，startLive 必须带对，否则会被拒。
