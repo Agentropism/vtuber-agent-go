@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/agent/broadcast"
@@ -152,9 +153,26 @@ func (a *App) Run(ctx context.Context) error {
 	// 推流随进程存活：地址解析、虚拟屏与 ffmpeg 都在这里起，退出时一并收掉
 	if a.stream != nil {
 		defer a.stream.Close()
+
+		var streaming sync.WaitGroup
+		streaming.Add(1)
 		go func() {
+			defer streaming.Done()
 			if err := a.stream.Run(ctx); err != nil && ctx.Err() == nil {
 				a.log.Sugar().Errorf("推流已停止: %v", err)
+			}
+		}()
+
+		// 退出前必须等推流协程收尾：它的 defer 里要调关播接口。进程先走就等于把
+		// 直播间挂在「直播中」（实测踩到：进程已退出，B 站侧 live_status 仍是 1、还挂着观众）。
+		defer func() {
+			done := make(chan struct{})
+			go func() { streaming.Wait(); close(done) }()
+
+			select {
+			case <-done:
+			case <-time.After(shutdownTimeout):
+				a.log.Sugar().Warn("等推流收尾超时，关播可能未完成")
 			}
 		}()
 	}
