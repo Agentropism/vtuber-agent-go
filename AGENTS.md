@@ -25,7 +25,7 @@ internal/agent/      编排层:只认事件与会话,不认平台协议
   frontend/            /client-ws 协议、Live2D 页面与模型托管、播报 Sink
   tool/                Tool 注册层
 internal/tts/        云 TTS 引擎(5 家 + failover,不做本地推理);统一输出裸 PCM16 24kHz 单声道
-internal/stream/     推流层(Xvfb 虚拟屏 + ffmpeg 双输入 → RTMP);**当前未接线**(零调用者、无配置键),启用前先接装配
+internal/stream/     推流层:开播取地址(B站 web 接口)+ Xvfb/Chrome 渲染 + ffmpeg 抓屏混音 → RTMP;由 [stream] 驱动
 internal/shared/     跨模块契约(零内部依赖);`action` 为下行 Action 契约
 internal/config/ internal/logger/  基础设施
 characters/ scripts/ config.toml.example   非 Go 资产,与 Go 包同层;前端静态页面在 internal/agent/frontend/web/(go:embed,必须留在包内)
@@ -119,6 +119,22 @@ POST /inject ──────────────────────�
 - 表情：模型清单的 `emotionMap` 决定词表，对话侧把回复里的 `[joy]` 标签摘进 `broadcast.Item.Emotion`，前端换成 Live2D 表达式下标；词表定义在 `internal/shared/emotion`。
 - 音频契约：TTS 输出裸 PCM16 24kHz 单声道，由 `internal/agent/frontend` 补 44 字节 WAV 头再 base64——浏览器不吃裸 PCM。
 
+### 推流（替代 OBS）
+
+配了 `[stream].enabled` 后由 `app.Run` 起停，链路是：
+
+```text
+开播取地址(B站 web 接口) → Xvfb 虚拟屏 → Chrome 全屏跑 /web/?autostart=1（画面来源）
+播报队列的 PCM ──────────────→ 命名管道 ──┐
+屏幕画面 ────────────────────→ x11grab ──┴→ ffmpeg → flv → RTMP
+```
+
+- 地址来源二选一：`cookie` + `room_id` 调开播接口自动拿（退出时自动关播），或直接填 `output`。
+- 推流与浏览器 Sink 是**并行扇出**（`pickSink` / `fanOutSink`），不是二选一：Chrome 里那个页面仍要靠 `speak` 驱动口型与字幕。
+- 空闲时 `silenceKeepalive` 补静音：命名管道没有写端时 ffmpeg 会阻塞在读音频上，连视频一起停（没配 TTS 就会撞上）。
+- 自检不需要任何凭据：`input = "test"` + `output = "/tmp/x.flv"`，跑完用 `ffprobe` 看 h264/aac 轨。
+
+踩过的四个坑（代码注释里都留了记号）：残留的 X socket 会被误判成活屏（`displayAlive` 真连一次而不是 stat）、ffmpeg 缺 `-y` 时上一轮残留的输出文件会让重启永远失败、Wayland 会话下 Chrome 会连 Wayland 而绕过虚拟屏（必须 `--ozone-platform=x11`）、虚拟屏没有 GPU 要显式放开软件 WebGL（`--enable-unsafe-swiftshader`）。
 ### Logger 注入
 
 每个需要日志的包用包级 `var log = zap.NewNop()` + `SetLogger()` 注入。调用方在 `app.Initialize()` 中注入。
@@ -139,6 +155,7 @@ POST /inject ──────────────────────�
 - B站 侧：**外部上报端**经 `/bilibili` 上报（`[[clients]]` + `adapter_key = "bilibili_live"`）；网关不做协议、不存凭据，接入要求见 `docs/BILIBILI_INGEST.md`
 - LLM：OpenAI 兼容远程端点（配置 `[llm]`，凭据可用环境变量 `LLM_API_KEY`）；未配置时跳过会话初始化，事件被丢弃
 - TTS：云引擎（配置 `[tts].engines` 与各引擎子表，凭据可用 `OPENAI_API_KEY` / `SILICONFLOW_API_KEY` / `FISH_API_KEY` / `MINIMAX_API_KEY`）；`edge_tts` 无需凭据。留空表示不启用语音播报
+- 推流（可选）：要 `ffmpeg`，`[stream].renderer` 打开时还要 `Xvfb` 与 Chrome（默认 `google-chrome-stable`）。
 
 ## 仓库布局与文档
 

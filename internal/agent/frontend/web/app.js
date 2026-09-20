@@ -310,6 +310,14 @@ function connect() {
 async function main() {
   await createStage();
 
+  // 无人值守推流时没有人能点页面（Chrome 以 --autoplay-policy=no-user-gesture-required
+  // 启动），用 ?autostart=1 直接连；正常打开仍然等一次点击，
+  // 免得把「开始播报之前」的内容静默丢掉。
+  if (new URLSearchParams(location.search).get('autostart') === '1') {
+    gateEl.classList.add('off');
+    connect();
+    return;
+  }
   // 等一次用户点击：浏览器的自动播放策略要求先有交互，否则 speak() 会被拒绝。
   // 点击之后才连服务端，这样开始播报之前的内容不会被静默丢掉。
   startButton.addEventListener('click', () => {

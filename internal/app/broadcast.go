@@ -21,8 +21,8 @@ var errBroadcastQueueFull = errors.New("播报队列已满，注入内容被丢�
 // provideBroadcast 装配 TTS 引擎链与统一播报队列。
 //
 // 未配置 [tts].engines 时返回 nil：此时会话只做文本下行，不产生语音播报。
-// front 非空时，音频投递到浏览器；否则用只记日志的占位实现。
-func provideBroadcast(cfg *config.Config, log *zap.Logger, front *frontend.Frontend) (*broadcast.Queue, error) {
+// 投递目标由 pickSink 决定：推流与浏览器可以并存（扇出），都没有时退回只记日志的占位实现。
+func provideBroadcast(cfg *config.Config, log *zap.Logger, front *frontend.Frontend, streaming *streamRuntime) (*broadcast.Queue, error) {
 	if len(cfg.TTS.Engines) == 0 {
 		log.Sugar().Info("未配置 [tts].engines，跳过语音播报")
 		return nil, nil
@@ -41,10 +41,7 @@ func provideBroadcast(cfg *config.Config, log *zap.Logger, front *frontend.Front
 	}
 	chain := tts.NewChain(engines...)
 
-	var sink broadcast.Sink = &logSink{log: log}
-	if front != nil {
-		sink = front.Sink()
-	}
+	sink := pickSink(log, front, streaming)
 
 	queue, err := broadcast.New(broadcast.Config{
 		Synth:       chain,
@@ -173,4 +170,53 @@ func (s *logSink) Play(ctx context.Context, item broadcast.Item, pcm []byte) err
 	case <-time.After(time.Duration(seconds * float64(time.Second))):
 		return nil
 	}
+}
+
+// pickSink 决定播报投递目标。
+//
+// 推流与浏览器是并行的两条路，不是二选一：Chrome 里那个页面要靠 speak 驱动口型
+// 与字幕，而推流管道要的是同一段 PCM，两者同时启用时扇出。
+func pickSink(log *zap.Logger, front *frontend.Frontend, streaming *streamRuntime) broadcast.Sink {
+	var sinks []broadcast.Sink
+	if streaming != nil {
+		sinks = append(sinks, newStreamSink(streaming, log))
+	}
+	if front != nil {
+		sinks = append(sinks, front.Sink())
+	}
+
+	switch len(sinks) {
+	case 0:
+		return &logSink{log: log}
+	case 1:
+		return sinks[0]
+	default:
+		return &fanOutSink{sinks: sinks}
+	}
+}
+
+// fanOutSink 并行投递给多个目标，全部结束才返回。
+//
+// 并行而不是串行：每个目标都按音频时长推进，串起来等于把音频以半速灌进推流管道
+// （听感上拖长、口型对不上），播报队列的冷却也会算错。
+type fanOutSink struct {
+	sinks []broadcast.Sink
+}
+
+func (s *fanOutSink) Play(ctx context.Context, item broadcast.Item, pcm []byte) error {
+	// 结果走 channel 收集而不是共享切片：每个目标只往带缓冲的通道里写自己的那一份，
+	// 构造上就没有共享内存可竞争。
+	results := make(chan error, len(s.sinks))
+	for _, sink := range s.sinks {
+		go func(sink broadcast.Sink) { results <- sink.Play(ctx, item, pcm) }(sink)
+	}
+
+	var firstErr error
+	for range s.sinks {
+		if err := <-results; err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
 }

@@ -207,7 +207,9 @@ func (s *Streamer) Close() error {
 func (s *Streamer) Args() []string {
 	cfg := s.cfg
 
-	args := []string{"-hide_banner", "-loglevel", "warning", "-nostdin"}
+	// -y 必须有：推流中途失败会在输出路径留下半截文件，没有它 ffmpeg 会直接
+	// 「File already exists. Exiting.」——重启与重试就永远起不来了（实测踩到）。
+	args := []string{"-hide_banner", "-loglevel", "warning", "-nostdin", "-y"}
 
 	// 视频输入
 	if cfg.Input == InputTest {
@@ -291,7 +293,7 @@ func (s *Streamer) Run(ctx context.Context) error {
 // runOnce 起一次 ffmpeg 并等它结束。
 func (s *Streamer) runOnce(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, s.cfg.FFmpeg, s.Args()...)
-	cmd.Stderr = &logWriter{}
+	cmd.Stderr = &logWriter{name: "ffmpeg"}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("启动 ffmpeg: %w", err)
@@ -332,12 +334,15 @@ func (s *Streamer) WritePCM(pcm []byte) {
 	_, _ = file.Write(pcm)
 }
 
-// logWriter 把 ffmpeg 的 stderr 转成 zap 日志。
-type logWriter struct{}
+// logWriter 把子进程的 stderr 转成 zap 日志。
+//
+// name 必须按进程给：三个子进程（Xvfb / Chrome / ffmpeg）共用这个类型，
+// 早先写死 "ffmpeg:" 前缀，Chrome 的 GPU 报错被记成 ffmpeg 的，排查时误导过一轮。
+type logWriter struct{ name string }
 
 func (w *logWriter) Write(p []byte) (int, error) {
 	if text := strings.TrimSpace(string(p)); text != "" {
-		log.Sugar().Debugf("ffmpeg: %s", text)
+		log.Sugar().Debugf("%s: %s", w.name, text)
 	}
 
 	return len(p), nil

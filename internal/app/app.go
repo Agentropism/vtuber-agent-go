@@ -26,6 +26,7 @@ import (
 type App struct {
 	Server *http.Server
 	log    *zap.Logger
+	stream *streamRuntime
 }
 
 // Initialize 装配全部组件。
@@ -61,8 +62,13 @@ func Initialize() (*App, error) {
 		return nil, err
 	}
 
+	// 推流：开播取地址 + 虚拟屏渲染 + ffmpeg 推 RTMP；未启用 [stream] 时为 nil
+	streaming, err := provideStream(cfg, log)
+	if err != nil {
+		return nil, err
+	}
 	// 语音播报：TTS 引擎链 + 统一播报队列；未配置 [tts].engines 时为 nil
-	queue, err := provideBroadcast(cfg, log, front)
+	queue, err := provideBroadcast(cfg, log, front, streaming)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +108,7 @@ func Initialize() (*App, error) {
 	Register()
 	event.SetLogger(log)
 
-	return &App{Server: server.ProvideServer(cfg, log, frontendRoutes(front)...), log: log}, nil
+	return &App{Server: server.ProvideServer(cfg, log, frontendRoutes(front)...), log: log, stream: streaming}, nil
 }
 
 // frontendRoutes 把前端接入挂到网关 mux 上。
@@ -131,6 +137,16 @@ const shutdownTimeout = 10 * time.Second
 func (a *App) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- a.Server.ListenAndServe() }()
+
+	// 推流随进程存活：地址解析、虚拟屏与 ffmpeg 都在这里起，退出时一并收掉
+	if a.stream != nil {
+		defer a.stream.Close()
+		go func() {
+			if err := a.stream.Run(ctx); err != nil && ctx.Err() == nil {
+				a.log.Sugar().Errorf("推流已停止: %v", err)
+			}
+		}()
+	}
 
 	select {
 	case err := <-errCh:

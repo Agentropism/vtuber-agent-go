@@ -137,3 +137,37 @@ path = "/bilibili"
 # B 站接入由外部上报端负责（连开放平台、鉴权、心跳、重连、拆帧），
 # 因此这里没有 [bilibili] 凭据段——凭据配在上报端自己的配置里。
 # 上报端要求与本仓删除的 Go 客户端修正过的已知坑见 docs/BILIBILI_INGEST.md。
+
+# 推流：把画面与声音推到 RTMP，替代 OBS。开启后链路是——
+#   1) 用下面的 cookie 与 room_id 调 B 站 web 接口开播，拿回推流地址与密钥；
+#   2) 本进程起 Xvfb 虚拟屏 + Chrome 全屏跑 /web/ 页面当画面；
+#   3) ffmpeg 抓屏 + 播报队列的 PCM → RTMP。
+# 进程退出时会调关播接口。只要 output 填了完整地址，就跳过第 1 步直接用这个地址。
+[stream]
+enabled = false
+output = ""
+# B 站登录态：浏览器里复制整条 Cookie，至少含 SESSDATA 与 bili_jct。
+# 留空时回退环境变量 BILIBILI_COOKIE。这是凭据，别提交。
+cookie = ""
+# 直播间号（不是用户 uid）
+room_id = 0
+# 分区 id，留空表示沿用直播间当前分区
+area_id = ""
+# 画面来源：screen=抓虚拟屏（正常用法），test=ffmpeg 测试画面（自检用，不需要虚拟屏）
+input = "screen"
+# 是否由本进程起虚拟屏与浏览器；显示与浏览器已自备（如手动起了 Xvfb）时置 false
+renderer = true
+display = ":99"
+xvfb = "Xvfb"
+chrome = "google-chrome-stable"
+# 尺寸需与虚拟屏一致，错开会缩放
+width = 1280
+height = 720
+fps = 30
+video_bitrate = "2500k"
+audio_bitrate = "128k"
+# 有 N 卡可换 h264_nvenc
+encoder = "libx264"
+ffmpeg = "ffmpeg"
+# ffmpeg 异常退出后的重启间隔；"0s" 用默认 5s，负数表示不重启
+restart_wait = "5s"
