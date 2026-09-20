@@ -145,6 +145,11 @@ async function createStage() {
     antialias: true,
     autoStart: true,
   });
+
+  // 虚拟屏上没有 GPU，渲染全靠 CPU（SwiftShader）：不限帧率时 Chrome 以 60fps 满速渲染，
+  // 实测吃掉 7 个核，把 ffmpeg 饿到 0.86 倍速（推流被服务端判为涓流后掐断）。
+  // 推流本身才 15-20fps，24fps 足够口型跟手。
+  app.ticker.maxFPS = 24;
 }
 
 async function loadModel(info) {

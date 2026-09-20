@@ -164,12 +164,15 @@ renderer = true
 display = ":99"
 xvfb = "Xvfb"
 chrome = "google-chrome-stable"
-# 尺寸需与虚拟屏一致，错开会缩放
-width = 1280
-height = 720
-fps = 30
-video_bitrate = "2500k"
-audio_bitrate = "128k"
+# 尺寸与帧率直接决定 Chrome 的 CPU 开销（虚拟屏无 GPU，渲染走软件）：
+#   1280x720@30 实测 Chrome 吃 7 个核，会把 x264 饿到 0.86 倍速、码率掉到 37k，
+#   被服务端判为涓流后约 12 秒掐断连接；640x360@15 稳定（Chrome ~3.7 核）。
+# 开着推流时先用 top 看一眼，Chrome 长期 100% 以上就往下调。
+width = 640
+height = 360
+fps = 15
+video_bitrate = "1200k"
+audio_bitrate = "64k"
 # 有 N 卡可换 h264_nvenc
 encoder = "libx264"
 ffmpeg = "ffmpeg"

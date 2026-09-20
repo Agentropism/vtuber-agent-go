@@ -54,16 +54,34 @@ type LiveInfo struct {
 	Key  string // 推流密钥
 }
 
-// Output 拼成 ffmpeg 直接可用的推流地址（地址与密钥合并）。
+// Output 拼成 ffmpeg 直接可用的推流地址。
+//
+// 关键事实（实测）：B 站 的 rtmp.code **不是**「一个密钥值」，而是**整段查询串**——
+// 形如 ?streamname=xxx&key=yyy&schedule=&pflag=，长度 91、以问号开头，而 rtmp.addr
+// 本身不带查询串。早先按「地址 + &key=<值>」拼，结果拼出 ?key=?streamname=... 这种畸形
+// URL：服务器握手后约 1.4 秒就把连接掐掉（ffmpeg 报 Broken pipe），而开播其实是成功的。
 func (i LiveInfo) Output() string {
-	if i.Key == "" {
+	switch {
+	case i.Key == "":
 		return i.Addr
-	}
-	if strings.Contains(i.Addr, "?") {
-		return i.Addr + "&key=" + i.Key
-	}
+	case strings.HasPrefix(i.Key, "?"):
+		// B 站 的常见形态：key 自带问号，直接接在地址后面
+		return i.Addr + i.Key
+	case strings.Contains(i.Key, "="):
+		// 没带问号但本身就是查询片段（streamname=..&key=..）
+		if strings.Contains(i.Addr, "?") {
+			return i.Addr + "&" + i.Key
+		}
 
-	return i.Addr + "?key=" + i.Key
+		return i.Addr + "?" + i.Key
+	default:
+		// 真的是一个裸密钥值
+		if strings.Contains(i.Addr, "?") {
+			return i.Addr + "&key=" + i.Key
+		}
+
+		return i.Addr + "?key=" + i.Key
+	}
 }
 
 // appSign 给表单加上 appkey 与 sign，返回已编码的请求体。

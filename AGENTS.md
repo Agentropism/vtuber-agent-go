@@ -137,6 +137,9 @@ POST /inject ──────────────────────�
 - 推流与浏览器 Sink 是**并行扇出**（`pickSink` / `fanOutSink`），不是二选一：Chrome 里那个页面仍要靠 `speak` 驱动口型与字幕。
 - 空闲时 `silenceKeepalive` 补静音：命名管道没有写端时 ffmpeg 会阻塞在读音频上，连视频一起停（没配 TTS 就会撞上）。
 - 自检不需要任何凭据：`input = "test"` + `output = "/tmp/x.flv"`，跑完用 `ffprobe` 看 h264/aac 轨。
+- **推流地址不能自己拼**：B 站 的 `rtmp.code` 是**整段查询串**（`?streamname=…&key=…&schedule=&pflag=`，实测长 91），而 `rtmp.addr` 不带查询串。按「地址 + `&key=`」拼会得到 `?key=?streamname=…` 的畸形 URL——服务端握手后约 1.4 秒掐断（ffmpeg 报 Broken pipe），而开播是成功的，看着极像网络问题。
+- **CPU 预算才是这套链路的瓶颈**（虚拟屏没 GPU，画面由 Chrome 用 SwiftShader 软件渲染）：实测 1280x720@30 时 Chrome 吃 **7 个核**、x264 只剩 0.86 倍速、码率掉到 37k，服务端判为涓流后 12 秒掐断；降到 **640x360@15** 并把页面 `app.ticker.maxFPS` 限到 24 后，Chrome 368%、x264 0.99x，连续 100+ 秒零中断。调分辨率/帧率前先看 `top`。
+- **开播准入按「当前 IP + 账号」判定**：同一账号（粉丝 27，远低于门槛写的 500）在原 IP 下稳定返回 `60045`，换 IP 后立刻开播成功。所以 60045 不等于「账号没资格」，先换网络再下结论；`/login/verify` 会照实展示业务码与原话。
 
 踩过的四个坑（代码注释里都留了记号）：残留的 X socket 会被误判成活屏（`displayAlive` 真连一次而不是 stat）、ffmpeg 缺 `-y` 时上一轮残留的输出文件会让重启永远失败、Wayland 会话下 Chrome 会连 Wayland 而绕过虚拟屏（必须 `--ozone-platform=x11`）、虚拟屏没有 GPU 要显式放开软件 WebGL（`--enable-unsafe-swiftshader`）。
 ### Logger 注入

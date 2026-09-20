@@ -228,15 +228,28 @@ func TestStopLivePostsCSRF(t *testing.T) {
 	}
 }
 
-// 冒烟里的假客户端也要能解析：地址没带问号时补 ?key=，没有 key 时不画蛇添足。
+// 推流地址拼法：B 站 的 rtmp.code 是整段查询串（以 ? 开头），别再给它加 &key=。
+//
+// 真跑踩到过：拼成 ?key=?streamname=... 的畸形 URL，服务器握手后 1.4 秒掐断（Broken pipe），
+// 而开播本身是成功的——症状看着像网络问题，其实是拼串错。
 func TestLiveInfoOutput(t *testing.T) {
 	cases := []struct {
 		name string
 		info LiveInfo
 		want string
 	}{
-		{"带问号", LiveInfo{Addr: "rtmp://h/live/?streamname=a", Key: "k"}, "rtmp://h/live/?streamname=a&key=k"},
-		{"不带问号", LiveInfo{Addr: "rtmp://h/live", Key: "k"}, "rtmp://h/live?key=k"},
+		{
+			"B 站 实际形态：code 自带问号",
+			LiveInfo{Addr: "rtmp://live-push.bilivideo.com/live-bvc/", Key: "?streamname=abc&key=def&schedule=&pflag="},
+			"rtmp://live-push.bilivideo.com/live-bvc/?streamname=abc&key=def&schedule=&pflag=",
+		},
+		{
+			"查询片段但没问号",
+			LiveInfo{Addr: "rtmp://h/live", Key: "streamname=a&key=k"},
+			"rtmp://h/live?streamname=a&key=k",
+		},
+		{"裸密钥 + 地址带问号", LiveInfo{Addr: "rtmp://h/live/?streamname=a", Key: "k"}, "rtmp://h/live/?streamname=a&key=k"},
+		{"裸密钥 + 地址不带问号", LiveInfo{Addr: "rtmp://h/live", Key: "k"}, "rtmp://h/live?key=k"},
 		{"没有密钥", LiveInfo{Addr: "rtmp://h/live"}, "rtmp://h/live"},
 	}
 	for _, tc := range cases {
