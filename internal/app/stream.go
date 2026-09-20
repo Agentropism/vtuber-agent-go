@@ -55,6 +55,12 @@ func provideStream(cfg *config.Config, log *zap.Logger) (*streamRuntime, error) 
 		log:  log,
 	}
 
+	// renderer 的零值是 false，最容易配漏：screen 模式又不自备显示时，ffmpeg 会以
+	// 「Cannot open display」告终，那句话离真正的原因（少写一行 renderer = true）很远。
+	if !s.Renderer && s.Input != string(stream.InputTest) {
+		log.Sugar().Warnf("未开启 [stream].renderer：需要自备 X 显示 %s（本进程不会起 Xvfb/Chrome）", s.Display)
+	}
+
 	// input = test 用的是 ffmpeg 自带测试画面，不需要虚拟屏与浏览器
 	if s.Renderer && s.Input != string(stream.InputTest) {
 		renderer, err := stream.NewRenderer(stream.RendererConfig{
