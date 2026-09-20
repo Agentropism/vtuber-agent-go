@@ -130,6 +130,9 @@ POST /inject ──────────────────────�
 ```
 
 - 地址来源二选一：`cookie` + `room_id` 调开播接口自动拿（退出时自动关播），或直接填 `output`。
+- **登录态怎么来**：起服务后浏览器打开 `http://127.0.0.1:<端口>/login/` 扫码（推荐），登录态落到 `data/bilibili-cookie.txt`（0600）；也可以直接填 `[stream].cookie` 或环境变量 `BILIBILI_COOKIE`。配置优先于扫码结果。
+- 登录页三个端点（`/login/`、`/login/qrcode.png`、`/login/status`）**只允许回环地址访问**：二维码一被扫就绑定账号，不该暴露给局域网。二维码由后端出 PNG（`go-qrcode`），页面本体不依赖任何前端库。
+- 首次使用的顺序必然是「先起服务 → 扫码 → 推流」：没登录态时 `waitForCookie` 会等（每 5s 重试）并打出可点的登录地址，而不是启动失败。
 - 推流与浏览器 Sink 是**并行扇出**（`pickSink` / `fanOutSink`），不是二选一：Chrome 里那个页面仍要靠 `speak` 驱动口型与字幕。
 - 空闲时 `silenceKeepalive` 补静音：命名管道没有写端时 ffmpeg 会阻塞在读音频上，连视频一起停（没配 TTS 就会撞上）。
 - 自检不需要任何凭据：`input = "test"` + `output = "/tmp/x.flv"`，跑完用 `ffprobe` 看 h264/aac 轨。

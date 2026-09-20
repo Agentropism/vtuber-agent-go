@@ -146,9 +146,13 @@ path = "/bilibili"
 [stream]
 enabled = false
 output = ""
-# B 站登录态：浏览器里复制整条 Cookie，至少含 SESSDATA 与 bili_jct。
-# 留空时回退环境变量 BILIBILI_COOKIE。这是凭据，别提交。
+# B 站登录态（能开播、能发弹幕的凭据）。两个来源，任选其一：
+#   1) 推荐：起服务后浏览器打开 http://127.0.0.1:<端口>/login/ 扫码，登录态自动落盘；
+#   2) 手动：浏览器里复制整条 Cookie 填这里，至少含 SESSDATA 与 bili_jct。
+# 这里留空时回退环境变量 BILIBILI_COOKIE；两者都空就用扫码登录落盘的文件。
 cookie = ""
+# 扫码登录的落盘路径，留空用 data/bilibili-cookie.txt（权限 0600，别提交）
+cookie_file = ""
 # 直播间号（不是用户 uid）
 room_id = 0
 # 分区 id，留空表示沿用直播间当前分区

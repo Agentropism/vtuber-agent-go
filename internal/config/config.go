@@ -133,6 +133,8 @@ type StreamConfig struct {
 	// RoomID 是直播间号；AreaID 留空表示沿用直播间当前分区。
 	RoomID int64  `mapstructure:"room_id"`
 	AreaID string `mapstructure:"area_id"`
+	// CookieFile 是扫码登录（/login/）落盘的登录态路径，留空用默认值。
+	CookieFile string `mapstructure:"cookie_file"`
 	// Input 是画面来源：screen（抓虚拟屏，默认）或 test（ffmpeg 测试画面，自检用）。
 	Input string `mapstructure:"input"`
 	// Renderer 为真时由本进程起 Xvfb + Chrome 渲染 /web/ 页面；显示与浏览器自备时置 false。

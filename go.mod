@@ -6,6 +6,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/hajimehoshi/go-mp3 v0.3.4
 	github.com/sashabaranov/go-openai v1.42.1
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/viper v1.20.1
 	github.com/wujunwei928/edge-tts-go v0.0.2
 	go.uber.org/zap v1.28.0

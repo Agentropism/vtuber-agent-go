@@ -81,6 +81,7 @@ func appSign(params map[string]string) string {
 	// md5 是 B 站接口的硬要求（sign=md5(表单+appsec)），不是这里的加密选择：
 	// 换 sha256 会导致接口直接拒签。它是签名算法，不是口令存储或校验。
 	// nosemgrep: go.lang.security.audit.crypto.use_of_weak_crypto.use-of-md5
+	// pi-lens-ignore: go-weak-hash
 	sum := md5.Sum([]byte(query + biliAppSec))
 
 	return query + "&sign=" + hex.EncodeToString(sum[:])
@@ -173,7 +174,7 @@ func liveVersion(ctx context.Context, cfg LiveConfig) (version string, build str
 
 	resp, err := getJSON(ctx, cfg, "/xlive/app-blink/v1/liveVersionInfo/getHomePageLiveVersion?"+appSign(params))
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("取开播版本: %w", err)
 	}
 
 	var payload struct {
@@ -213,7 +214,12 @@ func postForm(ctx context.Context, cfg LiveConfig, path, body string) ([]byte, e
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 
-	return do(ctx, cfg, req)
+	resp, err := do(ctx, cfg, req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 %s: %w", path, err)
+	}
+
+	return resp, nil
 }
 
 func getJSON(ctx context.Context, cfg LiveConfig, path string) ([]byte, error) {
@@ -222,37 +228,56 @@ func getJSON(ctx context.Context, cfg LiveConfig, path string) ([]byte, error) {
 		return nil, fmt.Errorf("stream: 构造请求: %w", err)
 	}
 
-	return do(ctx, cfg, req)
+	body, err := do(ctx, cfg, req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 %s: %w", path, err)
+	}
+
+	return body, nil
 }
 
 func do(ctx context.Context, cfg LiveConfig, req *http.Request) ([]byte, error) {
-	origin := baseURL(cfg)
-	req.Header.Set("User-Agent", biliUA)
-	req.Header.Set("Origin", origin)
-	req.Header.Set("Referer", origin+"/")
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Cookie", cfg.Cookie)
+	if cfg.Cookie != "" {
+		req.Header.Set("Cookie", cfg.Cookie)
+	}
 
-	client := cfg.Client
+	body, _, err := requestBili(ctx, baseURL(cfg), cfg.Client, req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 %s: %w", req.URL.Path, err)
+	}
+
+	return body, nil
+}
+
+// requestBili 发一次 B 站 web 请求，返回响应体与 Set-Cookie。
+//
+// Set-Cookie 也要返回：扫码登录成功的凭据只在响应头里，不在响应体里
+// （见 bilibili_login.go）。请求头照浏览器抄，风控看这些。
+func requestBili(ctx context.Context, base string, client *http.Client, req *http.Request) ([]byte, []*http.Cookie, error) {
+	req.Header.Set("User-Agent", biliUA)
+	req.Header.Set("Origin", base)
+	req.Header.Set("Referer", base+"/")
+	req.Header.Set("Accept", "*/*")
+
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("stream: 请求 B 站接口: %w", err)
+		return nil, nil, fmt.Errorf("stream: 请求 B 站接口: %w", err)
 	}
 	defer resp.Body.Close()
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, fmt.Errorf("stream: 读取响应: %w", err)
+		return nil, nil, fmt.Errorf("stream: 读取响应: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("stream: B 站接口返回 %d: %s", resp.StatusCode, truncate(string(data)))
+		return nil, nil, fmt.Errorf("stream: B 站接口返回 %d: %s", resp.StatusCode, truncate(string(data)))
 	}
 
-	return data, nil
+	return data, resp.Cookies(), nil
 }
 
 func baseURL(cfg LiveConfig) string {

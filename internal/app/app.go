@@ -67,6 +67,12 @@ func Initialize() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// 扫码登录：只为推流取开播凭据，未启用 [stream] 时为 nil
+	login := provideLogin(cfg, log)
+	if login != nil {
+		log.Sugar().Infof("扫码登录页（仅本机可访问）: %s", loginURL(cfg.Server.Addr))
+	}
 	// 语音播报：TTS 引擎链 + 统一播报队列；未配置 [tts].engines 时为 nil
 	queue, err := provideBroadcast(cfg, log, front, streaming)
 	if err != nil {
@@ -108,7 +114,12 @@ func Initialize() (*App, error) {
 	Register()
 	event.SetLogger(log)
 
-	return &App{Server: server.ProvideServer(cfg, log, frontendRoutes(front)...), log: log, stream: streaming}, nil
+	routes := frontendRoutes(front)
+	if login != nil {
+		routes = append(routes, login.routes()...)
+	}
+
+	return &App{Server: server.ProvideServer(cfg, log, routes...), log: log, stream: streaming}, nil
 }
 
 // frontendRoutes 把前端接入挂到网关 mux 上。

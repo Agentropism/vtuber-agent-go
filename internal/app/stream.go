@@ -27,6 +27,8 @@ type streamRuntime struct {
 	live     stream.LiveConfig
 	renderer *stream.Renderer
 	log      *zap.Logger
+	// loginURL 是扫码登录页地址，只在「未登录」提示里用一次。
+	loginURL string
 
 	mu       sync.Mutex
 	streamer *stream.Streamer
@@ -42,17 +44,19 @@ func provideStream(cfg *config.Config, log *zap.Logger) (*streamRuntime, error) 
 		log.Sugar().Info("未启用 [stream]，跳过推流")
 		return nil, nil
 	}
-	// 推流地址只有两个来源：手填 output，或开播接口拿。
-	if strings.TrimSpace(s.Output) == "" && (strings.TrimSpace(s.Cookie) == "" || s.RoomID == 0) {
-		return nil, errors.New("[stream] 已启用，但既没有 output 也没有 cookie + room_id：不知道往哪推")
+	// 推流地址只有两个来源：手填 output，或开播接口拿。开播要 room_id，
+	// 登录态可以等扫码登录后再补（见 waitForCookie）。
+	if strings.TrimSpace(s.Output) == "" && s.RoomID == 0 {
+		return nil, errors.New("[stream] 已启用，但既没有 output 也没有 room_id：不知道往哪推")
 	}
 
 	stream.SetLogger(log)
 
 	runtime := &streamRuntime{
-		cfg:  s,
-		live: stream.LiveConfig{Cookie: s.Cookie, RoomID: s.RoomID, AreaID: s.AreaID},
-		log:  log,
+		cfg:      s,
+		live:     stream.LiveConfig{RoomID: s.RoomID, AreaID: s.AreaID},
+		loginURL: loginURL(cfg.Server.Addr),
+		log:      log,
 	}
 
 	// renderer 的零值是 false，最容易配漏：screen 模式又不自备显示时，ffmpeg 会以
@@ -84,6 +88,18 @@ func provideStream(cfg *config.Config, log *zap.Logger) (*streamRuntime, error) 
 //
 // autostart=1 是给无人值守用的：虚拟屏上没有人能点「点击开始」。
 func webPageURL(addr string) string {
+	return hostURL(addr) + "/web/?autostart=1"
+}
+
+// loginURL 是扫码登录页地址。
+func loginURL(addr string) string {
+	return hostURL(addr) + loginPagePattern
+}
+
+// hostURL 把监听地址换成浏览器能访问的地址：":8080" → "http://127.0.0.1:8080"。
+//
+// 监听 0.0.0.0 时不能照抄给浏览器；登录页本来就只允许本机访问，用回环地址最稳。
+func hostURL(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		host, port = "", strings.TrimPrefix(addr, ":")
@@ -93,7 +109,7 @@ func webPageURL(addr string) string {
 		host = "127.0.0.1"
 	}
 
-	return fmt.Sprintf("http://%s:%s/web/?autostart=1", host, port)
+	return fmt.Sprintf("http://%s:%s", host, port)
 }
 
 // Run 解析推流地址、起画面与 ffmpeg，阻塞到 ctx 取消。
@@ -154,13 +170,59 @@ func (r *streamRuntime) resolveOutput(ctx context.Context) (output string, start
 		return r.cfg.Output, false, nil
 	}
 
-	info, err := stream.StartLive(ctx, r.live)
+	// 登录页由本进程提供，首次使用的顺序必然是「先起服务 → 扫码 → 推流」，
+	// 所以这里等凭据，而不是直接失败。
+	cookie, err := r.waitForCookie(ctx)
 	if err != nil {
 		return "", false, err
 	}
-	r.log.Sugar().Infof("已开播: 直播间 %d", r.live.RoomID)
+
+	live := r.live
+	live.Cookie = cookie
+
+	info, err := stream.StartLive(ctx, live)
+	if err != nil {
+		return "", false, err
+	}
+	r.log.Sugar().Infof("已开播: 直播间 %d", live.RoomID)
 
 	return info.Output(), true, nil
+}
+
+// cookieWaitInterval 是等待扫码登录的轮询间隔。
+const cookieWaitInterval = 5 * time.Second
+
+// waitForCookie 要一个可用的登录态：配置里填了就用它，否则读扫码登录落盘的文件。
+//
+// 登录页由本进程提供，所以首次使用的顺序必然是「先起服务 → 绕去 /login/ 扫码 → 推流」，
+// 这里必须等而不是直接失败；等到之前每 5 秒重试一次，并在第一次就给出可点的地址。
+func (r *streamRuntime) waitForCookie(ctx context.Context) (string, error) {
+	if cookie := strings.TrimSpace(r.cfg.Cookie); cookie != "" {
+		r.log.Sugar().Info("使用 [stream].cookie 提供的登录态")
+
+		return cookie, nil
+	}
+
+	path := cookiePath(r.cfg)
+	warned := false
+	for {
+		if cookie := stream.LoadLoginCookie(path); cookie != "" {
+			r.log.Sugar().Infof("使用扫码登录保存的登录态: %s", path)
+
+			return cookie, nil
+		}
+
+		if !warned {
+			r.log.Sugar().Warnf("未登录：浏览器打开 %s 扫码，或直接填 [stream].cookie（每 %s 重试一次）", r.loginURL, cookieWaitInterval)
+			warned = true
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(cookieWaitInterval):
+		}
+	}
 }
 
 // stopLive 关播。用独立 ctx：走到这里时主 ctx 已经取消了。

@@ -126,7 +126,14 @@ func TestRunProducesVideoAndAudio(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(2 * time.Second)
+	// 等输出攒够字节再收工：固定 sleep 在并行跑测试（别的用例在起 Xvfb/Chrome）时会 flake
+	waitDeadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(waitDeadline) {
+		if info, err := os.Stat(out); err == nil && info.Size() > 10_000 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	cancel()
 	<-done
 
