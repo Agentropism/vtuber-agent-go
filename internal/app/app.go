@@ -22,7 +22,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// App 是装配完成的进程：一个 HTTP 服务，外加随 ctx 存活的接入任务。
+// App 是装配完成的进程：一个 HTTP 服务。
 type App struct {
 	Server *http.Server
 	log    *zap.Logger
@@ -30,9 +30,8 @@ type App struct {
 
 // Initialize 装配全部组件。
 //
-// ctx 决定后台任务的生命周期：B 站开放平台长连接随它启动、随它取消而收尾
-// （取消时会调 end 接口结束互动会话）。
-func Initialize(ctx context.Context) (*App, error) {
+// 接入端（B 站上报端、QQ 适配端）都是外部进程，经 WebSocket 接入；这里不启动后台任务。
+func Initialize() (*App, error) {
 	started := time.Now()
 
 	cfg, err := config.ProvideConfig()
@@ -103,19 +102,6 @@ func Initialize(ctx context.Context) (*App, error) {
 	Register()
 	event.SetLogger(log)
 
-	// B 站开放平台长连接：事件在进程内直接进分发链，等价于一个内置的接入客户端
-	biliClient, err := provideBilibili(cfg, log)
-	if err != nil {
-		return nil, err
-	}
-	if biliClient != nil {
-		go func() {
-			if err := biliClient.Run(ctx); err != nil && ctx.Err() == nil {
-				log.Sugar().Errorf("B 站接入已停止: %v", err)
-			}
-		}()
-	}
-
 	return &App{Server: server.ProvideServer(cfg, log, frontendRoutes(front)...), log: log}, nil
 }
 
@@ -141,7 +127,7 @@ const shutdownTimeout = 10 * time.Second
 
 // Run 启动 HTTP 服务并阻塞，直到 ctx 取消或服务出错。
 //
-// ctx 取消时先停 HTTP 服务，再等后台任务收尾（B 站接入会在这里调 end 接口）。
+// ctx 取消时先停 HTTP 服务，再等已建立的连接收尾。
 func (a *App) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- a.Server.ListenAndServe() }()

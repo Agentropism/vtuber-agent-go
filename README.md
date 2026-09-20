@@ -51,3 +51,4 @@ docs/                  契约文档；docs/archive/ 为归档文档；docs/agent
 - 单 `go.mod`，除 `cmd/` 外全部包在 `internal/`；依赖只能向下，反向用函数注入破环。
 - 纯 Go、无 CGo，产物是单个二进制；前端页面用 `go:embed` 内嵌。
 - 凭据只走环境变量或 `config.toml`（已 gitignore），不进仓库。
+- B 站事件由**外部上报端**经 `/bilibili` 上报：网关不含 B 站协议实现（连接、鉴权、重连、凭据都在上报端）。接入要求与已知坑见 [`docs/BILIBILI_INGEST.md`](docs/BILIBILI_INGEST.md)。

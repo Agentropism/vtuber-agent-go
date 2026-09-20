@@ -6,7 +6,7 @@
 | --- | --- |
 | E0 骨架与基线 | ✅ |
 | E1 配置与事件模型 | ✅ 配置键面映射见 `docs/CONFIG_MIGRATION.md` |
-| E2 接入层 | ✅ QQ/OneBot、上行管线、**B 站开放平台长连接（内置）** |
+| E2 接入层 | ✅ QQ/OneBot、上行管线、**B 站事件由外部上报端经 `/bilibili` 接入**（网关不做协议） |
 | E3 会话核心 | ✅ 会话管理、Agent 循环、句子分段、历史裁剪、角色资产 |
 | E4 语音引擎 | ✅ 云 TTS 5 家 + failover，裸 PCM16 24kHz 单声道 |
 | E5 播报队列 | ✅ 优先级/抢占/冷却/并行合成、`/inject`、distillery 已删 |
@@ -66,9 +66,9 @@ SMOKE_MODELS_DIR=/path/to/live2d-models scripts/e2e/run.sh
 
 以下项目需要真实凭据，仓库内的测试无法覆盖：
 
-1. **B 站开放平台**：填入 `[bilibili]` 的 access_key / access_key_secret / id_code / app_id，
-   启动后确认日志出现「B 站互动会话已开始」「B 站长连接已就绪」，并能在真实直播间收到弹幕。
-   注意 `ID_CODE` 是主播身份码，同一身份码同时只能有一个会话（否则 start 接口会返回非 0）。
+1. **B 站上报端**：网关不含 B 站协议实现——需要外部上报端连到 `[[clients]]` 里 `/bilibili` 这个地址，
+	把事件信封原样上报。上报端要求与验收清单见 `docs/BILIBILI_INGEST.md`（原 Rust 客户端有 5 处实证缺陷：
+	压缩帧事件被静默丢弃、重连实际不可达、帧长越界 panic 等，若选它当上报端必须逐条验收）。
 2. **LLM**：填入 `[llm]` 的真实端点与模型，确认流式回复与（开启工具后的）工具调用。
 3. **TTS**：从 `[tts].engines` 里选一个可用引擎并填凭据；`edge_tts` 免凭据但需要外网。
 4. **前端**：浏览器打开 `http://<host>:6199/web/`，点「点击开始」，确认模型加载与出声。
@@ -79,8 +79,9 @@ SMOKE_MODELS_DIR=/path/to/live2d-models scripts/e2e/run.sh
 ```bash
 # 1. 停掉旧系统
 #    - Open-LLM-VTuber（:12393）
-#    - bilibili-live（Rust 客户端）
 #    - 若仍在跑：llm-vup-bridge（:9528）
+#    B 站上报端（bilibili-live 或其替代）**不停**：它现在的角色是给本服务喂事件，
+#    确认它指向本服务的 /bilibili，而不是旧系统地址。
 
 # 2. 起网关（单二进制，配置与角色资产在同一目录）
 cd <仓库根>
@@ -92,7 +93,7 @@ xdg-open http://127.0.0.1:6199/web/
 ```
 
 启动日志应当包含：`已加载角色`、`前端已就绪`、`长期记忆已启用`（若配置）、
-`语音播报已启用`、`agent 会话已启用`、`B 站开放平台接入已启用`（若配置）。
+`语音播报已启用`、`agent 会话已启用`。
 
 ## 6. 回滚预案
 
@@ -100,7 +101,7 @@ Go 版与旧系统的数据面互不依赖（不共用数据库、不共用配�
 
 | 项 | 回滚动作 |
 | --- | --- |
-| 进程 | 停 `vtuber-agent-go`，按旧流程起 `Open-LLM-VTuber` + `bilibili-live` |
+| 进程 | 停 `vtuber-agent-go`，按旧流程起 `Open-LLM-VTuber` + `bilibili-live`（B 站上报端需改回连旧系统地址） |
 | 配置 | 旧三套配置（`conf.yaml` / 旧 `config.toml` / `config.json`）从未被 Go 版改写，直接可用 |
 | 前端 | 旧前端是独立的 Vue 产物，随 `Open-LLM-VTuber` 一起回来（该仓库已移出本仓，位于 `~/Project/Open-LLM-VTuber`） |
 | 数据 | Go 版只新增了 `[agent].memory_file` 指向的 JSON Lines 文件，删掉即可；旧系统的数据未被触碰 |

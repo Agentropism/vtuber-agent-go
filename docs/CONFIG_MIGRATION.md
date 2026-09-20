@@ -87,7 +87,7 @@ Go 版把三者收敛为 **`config.toml` + `characters/*.toml`**（都在仓库�
 | `system_config.enable_proxy` | Python 侧靠内部代理把事件注入活跃会话；Go 版事件终端是进程内方法调用 |
 | `tts_preprocessor_config.translator_config.*` | 翻译不作为播报链路的一环 |
 | `tts_preprocessor_config.remove_special_char` 等 | 暂未实现；当前只做断句，需要时再补文本预处理 |
-| `live_config.bilibili_live.sessdata` | B 站 web 协议（blivedm）通路已废弃，改走开放平台 WSS |
+| `live_config.bilibili_live.sessdata` | B 站 web 协议（blivedm）通路已废弃；B 站事件由外部上报端经 `/bilibili` 上报（网关不做协议、不存凭据） |
 | `character_config.human_name` | 未被任何实现消费 |
 
 ## 4. 凭据规则

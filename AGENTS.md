@@ -14,7 +14,6 @@ cmd/vtuber-agent-go/  入口(单二进制;唯一不在 internal/ 下的包)
 internal/app/        装配:config → logger → 注入 → 注册 handler → 路由
 internal/gateway/    接入层:只认平台协议,不认会话/LLM
   event/               平台分发(event.Dispatch)+ onebot/ + bilibililive/(纯数据)
-  bilibili/            B站开放平台 WSS 客户端(连接/签名/心跳/重连,不含事件字段)
   server/              WS 接入与 Action 写回 + POST /inject 播报注入
   upload/              事件上行管线(去重/敏感词 → 背压 → 分发门控),出口由 SetHandler 注入
   filter/              去重 + 敏感词
@@ -26,7 +25,7 @@ internal/agent/      编排层:只认事件与会话,不认平台协议
   frontend/            /client-ws 协议、Live2D 页面与模型托管、播报 Sink
   tool/                Tool 注册层
 internal/tts/        云 TTS 引擎(5 家 + failover,不做本地推理);统一输出裸 PCM16 24kHz 单声道
-internal/stream/     推流层(Xvfb 虚拟屏 + ffmpeg 双输入 → RTMP)
+internal/stream/     推流层(Xvfb 虚拟屏 + ffmpeg 双输入 → RTMP);**当前未接线**(零调用者、无配置键),启用前先接装配
 internal/shared/     跨模块契约(零内部依赖);`action` 为下行 Action 契约
 internal/config/ internal/logger/  基础设施
 characters/ scripts/ config.toml.example   非 Go 资产,与 Go 包同层;前端静态页面在 internal/agent/frontend/web/(go:embed,必须留在包内)
@@ -75,7 +74,7 @@ path = "/bilibili"
 - `server` 包为每个 `client.Path` 注册路由，通过 `context.WithValue` 传递平台标识
 - `internal/app/register.go` 中 `registerQQ()` / `registerBilibili()` 分别注册各平台 handler
 - 上传时 `Upload(ctx, platform, event)` / `UploadNotice(ctx, platform, userID, text)` 的 `platform` 参数写入 `platformEvent.PlatformName`
-- `[bilibili]` 凭据齐全时，网关会**内置**一个开放平台长连接客户端（`internal/gateway/bilibili`），事件在进程内直接进 `event.Dispatch`，等价于一个连在 `/bilibili` 上的外部客户端；两条路径可并存
+- **网关不含 B 站协议实现**：连开放平台、鉴权、心跳、重连、拆帧都由**外部上报端**负责，它经 `/bilibili` 上报事件信封；凭据配在上报端自己那里。上报端要求与已知坑见 `docs/BILIBILI_INGEST.md`（2026-09 删除了原内置 Go 客户端 `internal/gateway/bilibili`，它的实测缺陷清单已转成该文档的验收清单）
 
 ### 事件上行与 agent 接入
 
@@ -137,7 +136,7 @@ POST /inject ──────────────────────�
 ## 外部依赖
 
 - QQ 侧：OneBot v11 客户端（配置 `[[clients]]` + `[server].addr`）
-- B站 侧：网关内置开放平台长连接（配置 `[bilibili]`，凭据可用环境变量 `BILIBILI_ACCESS_KEY` / `BILIBILI_ACCESS_KEY_SECRET` / `BILIBILI_ID_CODE` / `BILIBILI_APP_ID`）；也可继续用外部客户端经 `/bilibili` 上报
+- B站 侧：**外部上报端**经 `/bilibili` 上报（`[[clients]]` + `adapter_key = "bilibili_live"`）；网关不做协议、不存凭据，接入要求见 `docs/BILIBILI_INGEST.md`
 - LLM：OpenAI 兼容远程端点（配置 `[llm]`，凭据可用环境变量 `LLM_API_KEY`）；未配置时跳过会话初始化，事件被丢弃
 - TTS：云引擎（配置 `[tts].engines` 与各引擎子表，凭据可用 `OPENAI_API_KEY` / `SILICONFLOW_API_KEY` / `FISH_API_KEY` / `MINIMAX_API_KEY`）；`edge_tts` 无需凭据。留空表示不启用语音播报
 

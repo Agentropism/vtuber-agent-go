@@ -2,8 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/spf13/viper"
@@ -22,8 +20,7 @@ type Config struct {
 	Server struct {
 		Addr string `mapstructure:"addr"`
 	} `mapstructure:"server"`
-	Bilibili BilibiliConfig `mapstructure:"bilibili"`
-	LLM      struct {
+	LLM struct {
 		BaseURL     string  `mapstructure:"base_url"`    // OpenAI 兼容端点，例如 https://api.deepseek.com/v1
 		APIKey      string  `mapstructure:"api_key"`     // 优先取环境变量 LLM_API_KEY
 		Model       string  `mapstructure:"model"`       // 例如 deepseek-chat
@@ -125,42 +122,6 @@ type ClientConfig struct {
 	Path       string `mapstructure:"path"`
 }
 
-// BilibiliConfig 是 B 站直播开放平台的接入配置。
-type BilibiliConfig struct {
-	Enabled bool `mapstructure:"enabled"` // 显式开关；凭据齐全时自动启用
-	// Host 是开放平台 HTTP 地址，留空用官方地址 https://live-open.biliapi.com。
-	Host string `mapstructure:"host"`
-	// 凭据不进仓库：留空时回退到同名环境变量 BILIBILI_ACCESS_KEY 等。
-	AccessKey         string        `mapstructure:"access_key"`
-	AccessKeySecret   string        `mapstructure:"access_key_secret"`
-	IDCode            string        `mapstructure:"id_code"` // 主播身份码
-	AppID             int64         `mapstructure:"app_id"`
-	HeartbeatInterval time.Duration `mapstructure:"heartbeat_interval"` // 心跳周期，0=默认 20s
-}
-
-// applyEnv 用环境变量补齐没有写在配置文件里的凭据。
-//
-// 这里手动读而不是走 viper.BindEnv：app_id 是整数，viper 的字符串绑定遇到
-// 数字类型解码并不稳妥，统一手写反而更好预期。
-func (b *BilibiliConfig) applyEnv() {
-	if b.AccessKey == "" {
-		b.AccessKey = os.Getenv("BILIBILI_ACCESS_KEY")
-	}
-	if b.AccessKeySecret == "" {
-		b.AccessKeySecret = os.Getenv("BILIBILI_ACCESS_KEY_SECRET")
-	}
-	if b.IDCode == "" {
-		b.IDCode = os.Getenv("BILIBILI_ID_CODE")
-	}
-	if b.AppID == 0 {
-		if v := os.Getenv("BILIBILI_APP_ID"); v != "" {
-			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
-				b.AppID = n
-			}
-		}
-	}
-}
-
 func ProvideConfig() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -189,8 +150,6 @@ func ProvideConfig() (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
-
-	cfg.Bilibili.applyEnv()
 
 	return &cfg, nil
 }

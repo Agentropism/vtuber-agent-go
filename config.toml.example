@@ -134,20 +134,6 @@ platform = "bilibili"
 adapter_key = "bilibili_live"
 path = "/bilibili"
 
-# B 站直播开放平台长连接（进程内接入，等于内置一个 B 站客户端）
-# 凭据齐全时自动启用；也可用 enabled = true 显式打开。
-# 凭据不进仓库：留空时回退环境变量 BILIBILI_ACCESS_KEY / BILIBILI_ACCESS_KEY_SECRET /
-# BILIBILI_ID_CODE / BILIBILI_APP_ID。
-[bilibili]
-enabled = false
-# 开放平台 HTTP 地址，留空用官方地址 https://live-open.biliapi.com
-host = ""
-# 开放平台的 access key id 与签名密钥
-access_key = ""
-access_key_secret = ""
-# 主播身份码
-id_code = ""
-# 应用 ID（整数）
-app_id = 0
-# 心跳周期，留空（"0s"）用默认 20s
-heartbeat_interval = "20s"
+# B 站接入由外部上报端负责（连开放平台、鉴权、心跳、重连、拆帧），
+# 因此这里没有 [bilibili] 凭据段——凭据配在上报端自己的配置里。
+# 上报端要求与本仓删除的 Go 客户端修正过的已知坑见 docs/BILIBILI_INGEST.md。

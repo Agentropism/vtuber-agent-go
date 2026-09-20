@@ -11,11 +11,11 @@ import (
 )
 
 func main() {
-	// Ctrl-C / SIGTERM 触发优雅退出：停 HTTP 服务，并结束 B 站互动会话
+	// Ctrl-C / SIGTERM 触发优雅退出：停 HTTP 服务，并收尾已建立的连接
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	application, err := app.Initialize(ctx)
+	application, err := app.Initialize()
 	if err != nil {
 		log.Fatal(err)
 	}
