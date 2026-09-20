@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"net"
 	"os"
 	"os/exec"
@@ -116,11 +117,11 @@ func (r *Renderer) Start(ctx context.Context) error {
 	}
 
 	if displayAlive(r.cfg.Display) {
-		log.Sugar().Infof("显示 %s 已存在，复用（退出时不会关闭它）", r.cfg.Display)
+		logger.Infof("显示 %s 已存在，复用（退出时不会关闭它）", r.cfg.Display)
 	} else {
 		// 残留的 socket 会让 Xvfb 拒绝启动（Server is already active），先清掉
 		if err := os.Remove(displaySocket(r.cfg.Display)); err != nil && !os.IsNotExist(err) {
-			log.Sugar().Warnf("清理残留 X socket 失败: %v", err)
+			logger.Warnf("清理残留 X socket 失败: %v", err)
 		}
 		if err := r.startXvfb(ctx); err != nil {
 			return err
@@ -148,7 +149,7 @@ func (r *Renderer) Start(ctx context.Context) error {
 	}
 
 	r.started = true
-	log.Sugar().Infof("虚拟屏已就绪: %s %dx%d，页面 %s", r.cfg.Display, r.cfg.Width, r.cfg.Height, r.cfg.URL)
+	logger.Infof("虚拟屏已就绪: %s %dx%d，页面 %s", r.cfg.Display, r.cfg.Width, r.cfg.Height, r.cfg.URL)
 
 	return nil
 }
@@ -173,7 +174,7 @@ func (r *Renderer) stopLocked() {
 	}
 	if r.profileDir != "" {
 		if err := os.RemoveAll(r.profileDir); err != nil {
-			log.Sugar().Warnf("清理 chrome profile 失败: %v", err)
+			logger.Warnf("清理 chrome profile 失败: %v", err)
 		}
 		r.profileDir = ""
 	}
@@ -199,7 +200,7 @@ func (r *Renderer) startXvfb(ctx context.Context) error {
 	r.xvfb = cmd
 	// Xvfb 退出后回收，避免留僵尸进程
 	go func() { _ = cmd.Wait() }()
-	log.Sugar().Infof("已启动 Xvfb: %s %dx%d", r.cfg.Display, r.cfg.Width, r.cfg.Height)
+	logger.Infof("已启动 Xvfb: %s %dx%d", r.cfg.Display, r.cfg.Width, r.cfg.Height)
 
 	return nil
 }
@@ -243,7 +244,7 @@ func (r *Renderer) startChrome(ctx context.Context) error {
 	}
 	r.chrome = cmd
 	go func() { _ = cmd.Wait() }()
-	log.Sugar().Infof("已启动 Chrome（全屏），显示 %s", r.cfg.Display)
+	logger.Infof("已启动 Chrome（全屏），显示 %s", r.cfg.Display)
 
 	return nil
 }
@@ -336,6 +337,6 @@ func killProcessGroup(cmd *exec.Cmd, name string) {
 		time.Sleep(displayPollInterval)
 	}
 
-	log.Sugar().Warnf("%s 没有在 %s 内退出，强制杀掉", name, killGrace)
+	logger.Warnf("%s 没有在 %s 内退出，强制杀掉", name, killGrace)
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }

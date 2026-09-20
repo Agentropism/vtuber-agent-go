@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/coder/websocket"
 )
 
@@ -76,7 +77,7 @@ func (h *hub) add(conn *websocket.Conn) *client {
 	c := &client{id: h.nextID, conn: conn}
 	h.clients[c.id] = c
 
-	log.Sugar().Infof("前端已连接: id=%d 当前连接数=%d", c.id, len(h.clients))
+	logger.Infof("前端已连接: id=%d 当前连接数=%d", c.id, len(h.clients))
 	return c
 }
 
@@ -88,7 +89,7 @@ func (h *hub) remove(c *client) {
 	if h.clients[c.id] == c {
 		delete(h.clients, c.id)
 	}
-	log.Sugar().Infof("前端已断开: id=%d 剩余连接数=%d", c.id, len(h.clients))
+	logger.Infof("前端已断开: id=%d 剩余连接数=%d", c.id, len(h.clients))
 }
 
 // count 返回当前连接数。
@@ -105,7 +106,7 @@ func (h *hub) count() int {
 func (h *hub) broadcast(ctx context.Context, msg message) int {
 	payload, err := json.Marshal(msg)
 	if err != nil {
-		log.Sugar().Errorf("序列化下行消息失败: %v", err)
+		logger.Errorf("序列化下行消息失败: %v", err)
 		return 0
 	}
 
@@ -119,7 +120,7 @@ func (h *hub) broadcast(ctx context.Context, msg message) int {
 	sent := 0
 	for _, c := range targets {
 		if err := c.write(ctx, payload); err != nil {
-			log.Sugar().Warnf("向下行前端 %d 发送失败: %v", c.id, err)
+			logger.Warnf("向下行前端 %d 发送失败: %v", c.id, err)
 			continue
 		}
 		sent++

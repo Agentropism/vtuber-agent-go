@@ -13,10 +13,8 @@ import (
 	wordfilter "github.com/Agentropism/vtuber-agent-go/internal/gateway/filter"
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/event"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
-
-var log = zap.NewNop()
 
 // 事件类型常量
 const (
@@ -109,12 +107,6 @@ type DispatchScope struct {
 
 type scopeKey struct{}
 
-func SetLogger(l *zap.Logger) {
-	if l != nil {
-		log = l
-	}
-}
-
 // Init 初始化上传管线：创建有界缓存与过滤器，并启动消费协程。
 //
 // 事件终端由 SetHandler 注入（本地 agent 会话层），未注入时事件会被丢弃。
@@ -173,7 +165,7 @@ func consumeLoop(pending <-chan []byte, stop <-chan struct{}) {
 		case payload := <-pending:
 			h := currentHandler()
 			if h == nil {
-				log.Sugar().Warn("未注入事件处理器，丢弃事件")
+				logger.Warn("未注入事件处理器，丢弃事件")
 				continue
 			}
 			h(payload)
@@ -252,22 +244,22 @@ func scopeFrom(ctx context.Context) *DispatchScope {
 func enqueue(payload []byte) {
 	// 未注入终端处理器时无消费方：非阻塞丢弃，避免无限等待挂起事件链
 	if currentHandler() == nil {
-		log.Sugar().Warn("未注入事件处理器，丢弃事件")
+		logger.Warn("未注入事件处理器，丢弃事件")
 		return
 	}
 	// done 已关闭时直接丢弃，避免 select 在关闭与未满之间随机落到入队分支
 	select {
 	case <-done:
-		log.Sugar().Warn("网关已关闭，丢弃事件")
+		logger.Warn("网关已关闭，丢弃事件")
 		return
 	default:
 	}
 	if queueWaitTimeout <= 0 {
 		select {
 		case queue <- payload:
-			log.Sugar().Debug("上传事件已入队")
+			logger.Debug("上传事件已入队")
 		case <-done:
-			log.Sugar().Warn("上传缓存已满且网关关闭，丢弃事件")
+			logger.Warn("上传缓存已满且网关关闭，丢弃事件")
 		}
 		return
 	}
@@ -275,11 +267,11 @@ func enqueue(payload []byte) {
 	defer timer.Stop()
 	select {
 	case queue <- payload:
-		log.Sugar().Debug("上传事件已入队")
+		logger.Debug("上传事件已入队")
 	case <-timer.C:
-		log.Sugar().Error("上传缓存已满且等待超时，丢弃事件")
+		logger.Error("上传缓存已满且等待超时，丢弃事件")
 	case <-done:
-		log.Sugar().Warn("上传缓存已满且网关关闭，丢弃事件")
+		logger.Warn("上传缓存已满且网关关闭，丢弃事件")
 	}
 }
 
@@ -291,14 +283,14 @@ func upload(ctx context.Context, e platformEvent) {
 			return
 		}
 		if filter.Sensitive(e.ContentText) {
-			log.Sugar().Warnf("消息命中敏感词已丢弃: key=%s", key)
+			logger.Warnf("消息命中敏感词已丢弃: key=%s", key)
 			return
 		}
 	}
 
 	payload, err := json.Marshal(e)
 	if err != nil {
-		log.Sugar().Errorf("序列化平台事件失败: %v", err)
+		logger.Errorf("序列化平台事件失败: %v", err)
 		return
 	}
 

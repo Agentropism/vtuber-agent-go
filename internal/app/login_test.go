@@ -14,8 +14,6 @@ import (
 
 	"github.com/Agentropism/vtuber-agent-go/internal/config"
 	"github.com/Agentropism/vtuber-agent-go/internal/stream"
-
-	"go.uber.org/zap"
 )
 
 // newTestLogin 造一个把 passport 接口指向假服务器的登录服务。
@@ -24,7 +22,6 @@ func newTestLogin(t *testing.T, apiURL, cookiePath string) *loginService {
 
 	return &loginService{
 		cfg: config.StreamConfig{CookieFile: cookiePath},
-		log: zap.NewNop(),
 		api: stream.LoginConfig{BaseURL: apiURL},
 	}
 }
@@ -219,7 +216,6 @@ func newVerifyLogin(t *testing.T, status streamStatus) *httptest.Server {
 
 	s := &loginService{
 		cfg:    config.StreamConfig{CookieFile: filepath.Join(t.TempDir(), "cookie.txt")},
-		log:    zap.NewNop(),
 		stream: runtime,
 	}
 

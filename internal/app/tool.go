@@ -13,7 +13,7 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/agent/tool"
 	"github.com/Agentropism/vtuber-agent-go/internal/config"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
 
 // provideTools 装配工具注册层。
@@ -22,30 +22,28 @@ import (
 // 工具，只会浪费一轮调用。
 func provideTools(
 	cfg *config.Config,
-	log *zap.Logger,
 	store *memory.Store,
 	front *frontend.Frontend,
 	queue *broadcast.Queue,
 	started time.Time,
 ) *tool.Registry {
 	if !cfg.Agent.EnableTools {
-		log.Sugar().Info("未开启 [agent].enable_tools，跳过工具注册")
+		logger.Info("未开启 [agent].enable_tools，跳过工具注册")
 		return nil
 	}
 
-	tool.SetLogger(log)
 	registry := tool.New()
 
 	if store != nil {
 		if err := registry.Register(memorySearchTool(), memorySearchHandler(store)); err != nil {
-			log.Sugar().Warnf("注册记忆检索工具失败: %v", err)
+			logger.Warnf("注册记忆检索工具失败: %v", err)
 		}
 	}
 	if err := registry.Register(statusTool(), statusHandler(front, queue, started)); err != nil {
-		log.Sugar().Warnf("注册状态查询工具失败: %v", err)
+		logger.Warnf("注册状态查询工具失败: %v", err)
 	}
 
-	log.Sugar().Infof("工具已注册: %v", registry.Names())
+	logger.Infof("工具已注册: %v", registry.Names())
 	return registry
 }
 

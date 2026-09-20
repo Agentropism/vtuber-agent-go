@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/action"
 )
 
@@ -14,7 +15,7 @@ type eventTypeProbe struct {
 func Dispatch(ctx context.Context, raw []byte) action.Action {
 	var probe eventTypeProbe
 	if err := json.Unmarshal(raw, &probe); err != nil {
-		log.Sugar().Warnf("B站事件类型探测失败: %v", err)
+		logger.Warnf("B站事件类型探测失败: %v", err)
 		return action.Action{}
 	}
 
@@ -53,11 +54,11 @@ func Dispatch(ctx context.Context, raw []byte) action.Action {
 		var packet OpenPlatformPacket[LiveOpenPlatformInteractionEndEvent]
 		return decodeAndDispatch(ctx, raw, &packet, "B站互动结束", &LiveOpenPlatformInteractionEndActions)
 	case CmdStatus:
-		log.Sugar().Debugf("连接已发生")
-		log.Sugar().Debugf(string(raw))
+		logger.Debugf("连接已发生")
+		logger.Debug(string(raw)) // 纯消息、无占位符：走结构化形态，避免 vet 的格式串检查
 		return action.Action{}
 	default:
-		log.Sugar().Debugf("未知B站事件类型 cmd=%s", probe.Cmd)
+		logger.Debugf("未知B站事件类型 cmd=%s", probe.Cmd)
 		return action.Action{}
 	}
 }
@@ -70,7 +71,7 @@ func decodeAndDispatch[T any](
 	handlers *ActionList[T],
 ) action.Action {
 	if err := json.Unmarshal(raw, packet); err != nil {
-		log.Sugar().Warnf("解析 %s 事件失败: %v", eventType, err)
+		logger.Warnf("解析 %s 事件失败: %v", eventType, err)
 		return action.Action{}
 	}
 	return DispatchWithHandlers(ctx, packet.Data, handlers)

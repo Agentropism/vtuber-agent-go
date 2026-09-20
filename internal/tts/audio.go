@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/hajimehoshi/go-mp3"
 )
 
@@ -96,6 +97,6 @@ func EnsureContract(pcm []byte, sampleRate int) []byte {
 		return pcm
 	}
 
-	log.Sugar().Warnf("TTS 采样率 %d Hz 与契约 %d Hz 不一致，已重采样", sampleRate, SampleRate)
+	logger.Warnf("TTS 采样率 %d Hz 与契约 %d Hz 不一致，已重采样", sampleRate, SampleRate)
 	return Resample(pcm, sampleRate, SampleRate)
 }

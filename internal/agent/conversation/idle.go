@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/agent/broadcast"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
 
 // 主动发言的默认提示词与检查周期。
@@ -47,7 +48,7 @@ func (s *Sessions) startIdleLoop() {
 		}
 	}()
 
-	log.Sugar().Infof("主动发言已启用: 静默超过 %s 说一句", interval)
+	logger.Infof("主动发言已启用: 静默超过 %s 说一句", interval)
 }
 
 // triggerIdle 找出够久没动静的渠道，让它们各自主动说一句。
@@ -93,7 +94,7 @@ func (s *session) speakIdle() {
 		return nil
 	})
 	if err != nil {
-		log.Sugar().Warnf("渠道 %s 主动发言失败: %v", s.channel, err)
+		logger.Warnf("渠道 %s 主动发言失败: %v", s.channel, err)
 		return
 	}
 
@@ -108,8 +109,8 @@ func (s *session) speakIdle() {
 		Source:   "idle:" + s.channel,
 	}
 	if !s.cfg.Broadcast.Enqueue(item) {
-		log.Sugar().Warnf("渠道 %s 主动发言被队列拒绝", s.channel)
+		logger.Warnf("渠道 %s 主动发言被队列拒绝", s.channel)
 		return
 	}
-	log.Sugar().Infof("渠道 %s 主动发言已入队: %s", s.channel, text)
+	logger.Infof("渠道 %s 主动发言已入队: %s", s.channel, text)
 }

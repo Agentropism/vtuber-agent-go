@@ -17,8 +17,8 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/gateway/server"
 	"github.com/Agentropism/vtuber-agent-go/internal/stream"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/skip2/go-qrcode"
-	"go.uber.org/zap"
 )
 
 // 扫码登录：浏览器打开 /login/ 扫一张二维码，登录态落到 cookie 文件里，
@@ -47,7 +47,6 @@ const (
 // 同一时刻只保留一张二维码：多人扫同一张会让 cookie 归属不清。
 type loginService struct {
 	cfg config.StreamConfig
-	log *zap.Logger
 	// stream 用于读推流状态（是否在推、是否需要用户在手机上做一步）。
 	stream *streamRuntime
 	// api 指向 B 站 passport 接口；测试注入 httptest 地址，生产留空用官方地址。
@@ -56,15 +55,14 @@ type loginService struct {
 	// 指纹 cookie（buvid3 等）就在 generate 阶段下发。
 	client *http.Client
 
-	mu      sync.Mutex
-	qr      stream.LoginQRCode
-	qrAt    time.Time
-	cookie  string
-	savedAt time.Time
+	mu     sync.Mutex
+	qr     stream.LoginQRCode
+	qrAt   time.Time
+	cookie string
 }
 
 // provideLogin 装配扫码登录；未启用推流时返回 nil（登录只为拿开播凭据，别的地方用不上）。
-func provideLogin(cfg *config.Config, log *zap.Logger, streaming *streamRuntime) *loginService {
+func provideLogin(cfg *config.Config, streaming *streamRuntime) *loginService {
 	if !cfg.Stream.Enabled {
 		return nil
 	}
@@ -72,12 +70,11 @@ func provideLogin(cfg *config.Config, log *zap.Logger, streaming *streamRuntime)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		// 退化成不带 jar：登录仍可用，只是拿不到 generate 阶段下发的指纹 cookie
-		log.Sugar().Warnf("创建 cookie jar 失败: %v", err)
+		logger.Warnf("创建 cookie jar 失败: %v", err)
 	}
 
 	return &loginService{
 		cfg:    cfg.Stream,
-		log:    log,
 		stream: streaming,
 		client: &http.Client{Timeout: 15 * time.Second, Jar: jar},
 		// 启动时先把已登录的凭据读进来，省一次"未登录"的误报
@@ -135,16 +132,23 @@ func (s *loginService) qrcodeHandler() http.Handler {
 			return
 		}
 
-		png, err := qrcode.Encode(qr.URL, qrcode.Medium, loginQRCodeSize)
-		if err != nil {
-			http.Error(w, "生成二维码失败: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(png)
+		writeQRCodePNG(w, qr.URL)
 	})
+}
+
+// writeQRCodePNG 把内容出成二维码 PNG（登录二维码与开播验证二维码共用这一段）。
+func writeQRCodePNG(w http.ResponseWriter, content string) {
+	// 这里是二进制 PNG，不是 HTML，直接写响应体是安全的
+	png, err := qrcode.Encode(content, qrcode.Medium, loginQRCodeSize)
+	if err != nil {
+		http.Error(w, "生成二维码失败: "+err.Error(), http.StatusInternalServerError)
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(png)
 }
 
 // statusHandler 轮询一次登录状态；确认就把凭据落盘。
@@ -191,11 +195,10 @@ func (s *loginService) storeCookie(cookie string) error {
 
 	s.mu.Lock()
 	s.cookie = cookie
-	s.savedAt = time.Now()
 	s.mu.Unlock()
 
 	// 只记来源与长度，绝不把凭据写进日志
-	s.log.Sugar().Infof("扫码登录成功，登录态已保存: %s（%d 字符）", path, len(cookie))
+	logger.Infof("扫码登录成功，登录态已保存: %s（%d 字符）", path, len(cookie))
 
 	return nil
 }
@@ -213,7 +216,7 @@ func (s *loginService) ensureQRCodeLocked(ctx context.Context) (stream.LoginQRCo
 
 	s.qr = qr
 	s.qrAt = time.Now()
-	s.log.Sugar().Infof("已申请登录二维码，请在浏览器打开 http://<本机>/login/ 扫码")
+	logger.Infof("已申请登录二维码，请在浏览器打开 http://<本机>/login/ 扫码")
 
 	return qr, nil
 }
@@ -268,7 +271,7 @@ func loginPageHandler() http.Handler {
 		// 走 html/template 而不是手拼字符串：页面上的数据（B 站 的文案、链接）交给
 		// 模板转义，比自己记得 html.EscapeString 可靠。
 		// 静态页面，Execute 只可能因写响应失败而报错，这里没有可做的补救。
-		_ = loginPageTmpl.Execute(w, nil)
+		_ = pageTmpl.ExecuteTemplate(w, "login", nil)
 	})
 }
 
@@ -276,28 +279,35 @@ func loginPageHandler() http.Handler {
 //
 // 页面无动态数据，但仍然走 html/template：与验证页同一套路，
 // 将来往里加数据时不必再想「这里要不要转义」。
-var loginPageTmpl = template.Must(template.New("login").Parse(loginPageHTML))
+// pageStyle 是两个内嵌页面共用的样式：都是「居中卡片 + 二维码 + 状态行」。
+const pageStyle = `{{define "pageStyle"}}<style>
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #14161a; color: #e8eaf0; font: 14px/1.6 system-ui, -apple-system, "Noto Sans SC", sans-serif; }
+  .card { background: #1c1f26; border: 1px solid #2a2f3a; border-radius: 14px; padding: 28px 32px;
+          text-align: center; max-width: 420px; }
+  h1 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
+  .qr { width: 240px; height: 240px; background: #fff; border-radius: 10px; padding: 10px;
+        display: block; margin: 16px auto 0; }
+  .hint { color: #8b93a7; font-size: 13px; }
+  .status { margin-top: 16px; font-size: 13px; color: #8b93a7; min-height: 20px; }
+  .ok, .status.ok { color: #4ade80; }
+  .err, .status.err { color: #f87171; }
+  a { color: #7dd3fc; }
+  button { margin-top: 12px; background: #2a2f3a; color: #e8eaf0; border: 0; border-radius: 8px;
+           padding: 8px 16px; font-size: 13px; cursor: pointer; display: none; }
+  button:hover { background: #343a48; }
+</style>{{end}}`
 
-const loginPageHTML = `<!DOCTYPE html>
+// 两个页面共用一个模板集合：样式只留一份，页面各自 define。
+var pageTmpl = template.Must(template.New("pages").Parse(pageStyle + loginPageHTML + verifyPageHTML))
+
+const loginPageHTML = `{{define "login"}}<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>B 站扫码登录</title>
-<style>
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-         background: #14161a; color: #e8eaf0; font: 14px/1.6 system-ui, -apple-system, "Noto Sans SC", sans-serif; }
-  .card { background: #1c1f26; border: 1px solid #2a2f3a; border-radius: 14px; padding: 28px 32px; text-align: center; }
-  h1 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
-  .hint { margin: 0 0 18px; color: #8b93a7; font-size: 13px; }
-  .qr { width: 240px; height: 240px; background: #fff; border-radius: 10px; padding: 10px; display: block; }
-  .status { margin-top: 16px; font-size: 13px; color: #8b93a7; min-height: 20px; }
-  .status.ok { color: #4ade80; }
-  .status.err { color: #f87171; }
-  button { margin-top: 12px; background: #2a2f3a; color: #e8eaf0; border: 0; border-radius: 8px;
-           padding: 8px 16px; font-size: 13px; cursor: pointer; display: none; }
-  button:hover { background: #343a48; }
-</style>
+{{template "pageStyle"}}
 </head>
 <body>
   <div class="card">
@@ -364,7 +374,7 @@ const loginPageHTML = `<!DOCTYPE html>
 </script>
 </body>
 </html>
-`
+{{end}}`
 
 // verifyHandler 出开播验证页：60024 给可扫的二维码，60043 给实名/人脸入口。
 //
@@ -379,8 +389,8 @@ func (s *loginService) verifyHandler() http.Handler {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		if err := verifyPageTmpl.Execute(w, verifyView(s.status())); err != nil {
-			s.log.Sugar().Warnf("渲染验证页失败: %v", err)
+		if err := pageTmpl.ExecuteTemplate(w, "verify", verifyView(s.status())); err != nil {
+			logger.Warnf("渲染验证页失败: %v", err)
 		}
 	})
 }
@@ -394,16 +404,7 @@ func (s *loginService) verifyQRHandler() http.Handler {
 			return
 		}
 
-		// 这里是二进制 PNG，不是 HTML，直接写响应体是安全的
-		png, err := qrcode.Encode(status.Pending.QR, qrcode.Medium, loginQRCodeSize)
-		if err != nil {
-			http.Error(w, "生成二维码失败: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(png)
+		writeQRCodePNG(w, status.Pending.QR)
 	})
 }
 
@@ -448,26 +449,14 @@ func verifyView(status streamStatus) verifyViewData {
 //
 // 用 html/template：B 站 返回的文案与链接会进页面，转义交给模板，
 // 不给自己「忘了转义」的机会（FaceAuth 是我们自己拼的 https 链接，也一样过模板）。
-var verifyPageTmpl = template.Must(template.New("verify").Parse(`<!DOCTYPE html>
+const verifyPageHTML = `{{define "verify"}}<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>开播验证</title>
 {{if .AutoRefresh}}<meta http-equiv="refresh" content="3">{{end}}
-<style>
-  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
-         background: #14161a; color: #e8eaf0; font: 14px/1.6 system-ui, -apple-system, "Noto Sans SC", sans-serif; }
-  .card { background: #1c1f26; border: 1px solid #2a2f3a; border-radius: 14px; padding: 28px 32px;
-          text-align: center; max-width: 420px; }
-  h1 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
-  .qr { width: 240px; height: 240px; background: #fff; border-radius: 10px; padding: 10px;
-        display: block; margin: 16px auto 0; }
-  .hint { color: #8b93a7; font-size: 13px; }
-  .ok { color: #4ade80; }
-  .err { color: #f87171; }
-  a { color: #7dd3fc; }
-</style>
+{{template "pageStyle"}}
 </head>
 <body>
   <div class="card">
@@ -492,4 +481,4 @@ var verifyPageTmpl = template.Must(template.New("verify").Parse(`<!DOCTYPE html>
   </div>
 </body>
 </html>
-`))
+{{end}}`

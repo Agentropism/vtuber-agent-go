@@ -8,17 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
-
-var log = zap.NewNop()
-
-// SetLogger 注入日志器。
-func SetLogger(l *zap.Logger) {
-	if l != nil {
-		log = l
-	}
-}
 
 // Deduplicator 简单去重器：记录最近见过的键，窗口过期后自动遗忘。
 // 内部加锁，可被多个分发协程并发使用。
@@ -75,7 +66,7 @@ func New(wordsFile string, dedupTTL time.Duration) (*Filter, error) {
 	for _, w := range words {
 		f.trie.Insert(w)
 	}
-	log.Sugar().Infof("敏感词库已加载: 文件=%s 词数=%d", wordsFile, len(words))
+	logger.Infof("敏感词库已加载: 文件=%s 词数=%d", wordsFile, len(words))
 	return f, nil
 }
 
@@ -105,7 +96,7 @@ func loadWordsFile(path string) ([]string, error) {
 // Duplicate 报告键是否在去重窗口内重复；键为空时直接放行。
 func (f *Filter) Duplicate(key string) bool {
 	if f.dedup.Seen(key) {
-		log.Sugar().Debugf("重复消息已丢弃: key=%s", key)
+		logger.Debugf("重复消息已丢弃: key=%s", key)
 		return true
 	}
 	return false

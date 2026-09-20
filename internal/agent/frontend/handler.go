@@ -10,6 +10,7 @@ import (
 
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/emotion"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/coder/websocket"
 )
 
@@ -71,7 +72,7 @@ func New(cfg Config) (*Frontend, error) {
 		model.Scale = 1
 	}
 
-	log.Sugar().Infof("前端已就绪: 角色=%s 模型=%s 表情标签=%d 个 表达式=%d 个",
+	logger.Infof("前端已就绪: 角色=%s 模型=%s 表情标签=%d 个 表达式=%d 个",
 		cfg.Character.Name, model.Name, emotions.Len(), len(model.Expressions))
 
 	return &Frontend{
@@ -107,7 +108,7 @@ func (f *Frontend) ClientWSHandler() http.Handler {
 			CompressionMode: websocket.CompressionDisabled,
 		})
 		if err != nil {
-			log.Sugar().Warnf("前端 WebSocket 握手失败: %v", err)
+			logger.Warnf("前端 WebSocket 握手失败: %v", err)
 			return
 		}
 		defer conn.CloseNow()
@@ -116,7 +117,7 @@ func (f *Frontend) ClientWSHandler() http.Handler {
 		defer f.hub.remove(client)
 
 		if err := f.sendHello(r.Context(), client); err != nil {
-			log.Sugar().Warnf("下发 hello 失败: %v", err)
+			logger.Warnf("下发 hello 失败: %v", err)
 			return
 		}
 
@@ -144,7 +145,7 @@ func (f *Frontend) ModelsHandler() http.Handler {
 func (f *Frontend) WebHandler() http.Handler {
 	sub, err := fs.Sub(webAssets, "web")
 	if err != nil {
-		log.Sugar().Errorf("前端资源不可用: %v", err)
+		logger.Errorf("前端资源不可用: %v", err)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "前端资源不可用", http.StatusInternalServerError)
 		})
@@ -190,7 +191,7 @@ func (f *Frontend) readLoop(ctx context.Context, conn *websocket.Conn) {
 
 		var msg clientMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
-			log.Sugar().Warnf("解析前端消息失败: %v", err)
+			logger.Warnf("解析前端消息失败: %v", err)
 			continue
 		}
 
@@ -198,17 +199,17 @@ func (f *Frontend) readLoop(ctx context.Context, conn *websocket.Conn) {
 		case "playback-started":
 			var seq seqData
 			if err := json.Unmarshal(msg.Data, &seq); err == nil {
-				log.Sugar().Debugf("前端开始播放: seq=%d", seq.Seq)
+				logger.Debugf("前端开始播放: seq=%d", seq.Seq)
 			}
 		case "playback-finished":
 			var seq seqData
 			if err := json.Unmarshal(msg.Data, &seq); err != nil {
-				log.Sugar().Warnf("解析播报回执失败: %v", err)
+				logger.Warnf("解析播报回执失败: %v", err)
 				continue
 			}
 			f.hub.notifyPlayback(seq.Seq)
 		default:
-			log.Sugar().Debugf("忽略前端消息: %s", msg.Type)
+			logger.Debugf("忽略前端消息: %s", msg.Type)
 		}
 	}
 }
@@ -240,6 +241,6 @@ func (f *Frontend) writeModelInfo(w http.ResponseWriter) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Sugar().Warnf("写出模型清单失败: %v", err)
+		logger.Warnf("写出模型清单失败: %v", err)
 	}
 }

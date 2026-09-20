@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
 
 // PCM 契约：所有引擎统一返回「裸 PCM16 小端、24kHz、单声道」字节流。
@@ -17,15 +17,6 @@ const (
 	Channels       = 1     // 声道数
 	BytesPerSample = 2     // 位深 16 bit
 )
-
-var log = zap.NewNop()
-
-// SetLogger 注入日志器，由 app.Initialize() 调用。
-func SetLogger(l *zap.Logger) {
-	if l != nil {
-		log = l
-	}
-}
 
 // Engine 是一个云 TTS 引擎：把单句文本合成成裸 PCM。
 //
@@ -94,14 +85,14 @@ func (c *Chain) Synthesize(ctx context.Context, text string) ([]byte, error) {
 
 		pcm, err := engine.Synthesize(ctx, text)
 		if err != nil {
-			log.Sugar().Warnf("TTS 引擎 %s 合成失败，降级到下一个: %v", engine.Name(), err)
+			logger.Warnf("TTS 引擎 %s 合成失败，降级到下一个: %v", engine.Name(), err)
 			failures = append(failures, fmt.Errorf("%s: %w", engine.Name(), err))
 			continue
 		}
 
 		// 空音频按失败处理：部分引擎存在「没有音频也不报错」的返回路径。
 		if len(pcm) == 0 {
-			log.Sugar().Warnf("TTS 引擎 %s 返回空音频，降级到下一个", engine.Name())
+			logger.Warnf("TTS 引擎 %s 返回空音频，降级到下一个", engine.Name())
 			failures = append(failures, fmt.Errorf("%s: 返回空音频", engine.Name()))
 			continue
 		}

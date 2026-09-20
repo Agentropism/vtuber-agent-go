@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/action"
 )
 
@@ -19,7 +20,7 @@ type eventTypeProbe struct {
 func Dispatch(ctx context.Context, raw []byte) action.Action {
 	var probe eventTypeProbe
 	if err := json.Unmarshal(raw, &probe); err != nil {
-		log.Sugar().Warnf("事件类型探测失败: %v", err)
+		logger.Warnf("事件类型探测失败: %v", err)
 		return action.Action{}
 	}
 
@@ -33,7 +34,7 @@ func Dispatch(ctx context.Context, raw []byte) action.Action {
 	case "request":
 		return dispatchRequestEvent(ctx, probe.RequestType, raw)
 	default:
-		log.Sugar().Debugf("未知事件类型 post_type=%s", probe.PostType)
+		logger.Debugf("未知事件类型 post_type=%s", probe.PostType)
 		return action.Action{}
 	}
 }
@@ -47,7 +48,7 @@ func dispatchMetaEvent(ctx context.Context, metaEventType string, raw []byte) ac
 		var event MetaHeartbeatEvent
 		return decodeAndDispatch(ctx, raw, &event, "meta heartbeat", &MetaHeartbeatActions)
 	default:
-		log.Sugar().Debugf("未知元事件类型 meta_event_type=%s", metaEventType)
+		logger.Debugf("未知元事件类型 meta_event_type=%s", metaEventType)
 		return action.Action{}
 	}
 }
@@ -61,7 +62,7 @@ func dispatchMessageEvent(ctx context.Context, messageType string, raw []byte) a
 		var event MessageGroupEvent
 		return decodeAndDispatch(ctx, raw, &event, "message group", &MessageGroupActions)
 	default:
-		log.Sugar().Debugf("未知消息类型 message_type=%s", messageType)
+		logger.Debugf("未知消息类型 message_type=%s", messageType)
 		return action.Action{}
 	}
 }
@@ -95,7 +96,7 @@ func dispatchNoticeEvent(ctx context.Context, noticeType, subType string, raw []
 	case "notify":
 		return dispatchNotifyEvent(ctx, subType, raw)
 	default:
-		log.Sugar().Debugf("未知通知类型 notice_type=%s", noticeType)
+		logger.Debugf("未知通知类型 notice_type=%s", noticeType)
 		return action.Action{}
 	}
 }
@@ -115,7 +116,7 @@ func dispatchNotifyEvent(ctx context.Context, subType string, raw []byte) action
 		var event NoticeNotifyInputStatusEvent
 		return decodeAndDispatch(ctx, raw, &event, "notice notify input_status", &NoticeNotifyInputStatusActions)
 	default:
-		log.Sugar().Debugf("未知通知子类型 sub_type=%s", subType)
+		logger.Debugf("未知通知子类型 sub_type=%s", subType)
 		return action.Action{}
 	}
 }
@@ -129,7 +130,7 @@ func dispatchRequestEvent(ctx context.Context, requestType string, raw []byte) a
 		var event RequestGroupEvent
 		return decodeAndDispatch(ctx, raw, &event, "request group", &RequestGroupActions)
 	default:
-		log.Sugar().Debugf("未知请求类型 request_type=%s", requestType)
+		logger.Debugf("未知请求类型 request_type=%s", requestType)
 		return action.Action{}
 	}
 }
@@ -148,6 +149,6 @@ func decodeAndDispatch[T any](
 }
 
 func decodeFailed(eventType string, err error) action.Action {
-	log.Sugar().Warnf("解析 %s 事件失败: %v", eventType, err)
+	logger.Warnf("解析 %s 事件失败: %v", eventType, err)
 	return action.Action{}
 }

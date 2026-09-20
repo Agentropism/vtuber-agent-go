@@ -8,17 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
-
-var log = zap.NewNop()
-
-// SetLogger 注入日志器，由 app.Initialize() 调用。
-func SetLogger(l *zap.Logger) {
-	if l != nil {
-		log = l
-	}
-}
 
 // 默认参数。
 const (
@@ -175,10 +166,10 @@ func (q *Queue) Enqueue(item Item) bool {
 		if victim < 0 || q.pending[victim].item.Priority >= item.Priority {
 			q.mu.Unlock()
 			q.dropped.Add(1)
-			log.Sugar().Warnf("播报队列已满，丢弃新条目: priority=%s source=%s", item.Priority, item.Source)
+			logger.Warnf("播报队列已满，丢弃新条目: priority=%s source=%s", item.Priority, item.Source)
 			return false
 		}
-		log.Sugar().Warnf("播报队列已满，淘汰最低优先级待合成条目: priority=%s", q.pending[victim].item.Priority)
+		logger.Warnf("播报队列已满，淘汰最低优先级待合成条目: priority=%s", q.pending[victim].item.Priority)
 		q.pending = removeAt(q.pending, victim)
 		q.dropped.Add(1)
 	}
@@ -270,14 +261,14 @@ func (q *Queue) run() {
 
 		// 1) 抢占：待播内容里出现了比当前播报更高优先级的条目
 		if playing != nil && topWaiting > playing.item.Priority {
-			log.Sugar().Infof("高优先级播报打断当前条目: %s → %s", playing.item.Priority, topWaiting)
+			logger.Infof("高优先级播报打断当前条目: %s → %s", playing.item.Priority, topWaiting)
 			q.preempted.Add(1)
 			playCancel()
 
 			select {
 			case <-playDone:
 			case <-time.After(preemptWaitTimeout):
-				log.Sugar().Warn("Sink.Play 未在取消后及时返回，继续调度")
+				logger.Warn("Sink.Play 未在取消后及时返回，继续调度")
 			}
 
 			// 被打断的条目重新排队：保留已合成的音频，换新序号回到同级队尾
@@ -319,7 +310,7 @@ func (q *Queue) run() {
 				playCancel = cancel
 				q.startPlay(ctx, nextReady, playDone)
 
-				log.Sugar().Infof("开始播报: priority=%s source=%s 字节=%d",
+				logger.Infof("开始播报: priority=%s source=%s 字节=%d",
 					nextReady.item.Priority, nextReady.item.Source, len(nextReady.pcm))
 				continue
 			}
@@ -349,10 +340,10 @@ func (q *Queue) run() {
 			switch {
 			case result.err != nil:
 				q.failed.Add(1)
-				log.Sugar().Errorf("播报合成失败: priority=%s 错误=%v", result.entry.item.Priority, result.err)
+				logger.Errorf("播报合成失败: priority=%s 错误=%v", result.entry.item.Priority, result.err)
 			case len(result.pcm) == 0:
 				q.failed.Add(1)
-				log.Sugar().Warnf("播报合成返回空音频: priority=%s", result.entry.item.Priority)
+				logger.Warnf("播报合成返回空音频: priority=%s", result.entry.item.Priority)
 			default:
 				result.entry.pcm = result.pcm
 				ready[result.entry.seq] = result.entry
@@ -386,7 +377,7 @@ func (q *Queue) startPlay(ctx context.Context, e *entry, done chan struct{}) {
 			return // 被抢占，不计失败
 		}
 		q.failed.Add(1)
-		log.Sugar().Errorf("播报投递失败: priority=%s 错误=%v", e.item.Priority, err)
+		logger.Errorf("播报投递失败: priority=%s 错误=%v", e.item.Priority, err)
 	}()
 }
 

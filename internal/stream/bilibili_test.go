@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +122,7 @@ func TestStartLiveSurfacesVerifyCode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "startLive") {
-					_, _ = w.Write([]byte(`{"code":` + itoa(tc.code) + `,"message":"need verify",` + tc.data + `}`))
+					_, _ = w.Write([]byte(`{"code":` + strconv.Itoa(tc.code) + `,"message":"need verify",` + tc.data + `}`))
 					return
 				}
 				_, _ = w.Write([]byte(`{"code":0,"data":{"curr_version":"1.2.3","build":4567}}`))

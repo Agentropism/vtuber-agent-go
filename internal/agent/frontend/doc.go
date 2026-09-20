@@ -20,15 +20,3 @@
 // 音频统一是裸 PCM16 24kHz 单声道（tts 包的契约），这里补 44 字节 WAV 头再 base64，
 // 浏览器用 <audio> 直接播，前端不需要做任何解码。
 package frontend
-
-import "go.uber.org/zap"
-
-// log 由 app 在启动时注入；未注入时静默。
-var log = zap.NewNop()
-
-// SetLogger 注入日志器。
-func SetLogger(l *zap.Logger) {
-	if l != nil {
-		log = l
-	}
-}

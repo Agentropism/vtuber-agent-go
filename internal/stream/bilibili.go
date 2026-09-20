@@ -436,7 +436,12 @@ func requestBili(ctx context.Context, base string, client *http.Client, req *htt
 		return nil, nil, fmt.Errorf("stream: 读取响应: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("stream: B 站接口返回 %d: %s", resp.StatusCode, truncate(string(data)))
+		body := string(data)
+		if len(body) > 200 {
+			body = body[:200] + "…"
+		}
+
+		return nil, nil, fmt.Errorf("stream: B 站接口返回 %d: %s", resp.StatusCode, body)
 	}
 
 	return data, resp.Cookies(), nil
@@ -448,12 +453,4 @@ func baseURL(cfg LiveConfig) string {
 	}
 
 	return biliBaseURL
-}
-
-func truncate(text string) string {
-	if len(text) > 200 {
-		return text[:200] + "…"
-	}
-
-	return text
 }

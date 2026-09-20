@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
 
 // maxInjectBody 是 /inject 请求体上限，避免异常请求占用内存。
@@ -48,45 +48,45 @@ func currentInjectFunc() InjectFunc {
 }
 
 // handleInject 处理 POST /inject：校验请求体后交给注入实现。
-func handleInject(w http.ResponseWriter, r *http.Request, log *zap.Logger) {
+func handleInject(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"}, log)
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 
 	var req InjectRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxInjectBody)).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"}, log)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json body"})
 		return
 	}
 
 	req.Text = strings.TrimSpace(req.Text)
 	if req.Text == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "empty text"}, log)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "empty text"})
 		return
 	}
 
 	fn := currentInjectFunc()
 	if fn == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "broadcast disabled"}, log)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "broadcast disabled"})
 		return
 	}
 
 	if err := fn(req); err != nil {
-		log.Sugar().Warnf("播报注入未入队: %v", err)
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()}, log)
+		logger.Warnf("播报注入未入队: %v", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 		return
 	}
 
-	log.Sugar().Infof("播报注入已入队: emotion=%q 文本=%s", req.Emotion, req.Text)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"}, log)
+	logger.Infof("播报注入已入队: emotion=%q 文本=%s", req.Emotion, req.Text)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // writeJSON 写出 JSON 响应；走到这里响应头已发出，序列化失败只能记日志。
-func writeJSON(w http.ResponseWriter, status int, body any, log *zap.Logger) {
+func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Sugar().Warnf("写出响应失败: %v", err)
+		logger.Warnf("写出响应失败: %v", err)
 	}
 }

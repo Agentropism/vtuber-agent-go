@@ -6,16 +6,8 @@ import (
 
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/action"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
-
-var log = zap.NewNop()
-
-func SetLogger(logger *zap.Logger) {
-	if logger != nil {
-		log = logger
-	}
-}
 
 type ActionList[T any] struct {
 	handlers []func(context.Context, T) action.Action
@@ -24,7 +16,7 @@ type ActionList[T any] struct {
 func newActionList[T any](eventType string) ActionList[T] {
 	var list ActionList[T]
 	list.Add(func(ctx context.Context, event T) action.Action {
-		log.Sugar().Debugf("分发 %s 事件: %s", eventType, fmt.Sprint(event))
+		logger.Debugf("分发 %s 事件: %s", eventType, fmt.Sprint(event))
 		return action.Action{}
 	})
 	return list

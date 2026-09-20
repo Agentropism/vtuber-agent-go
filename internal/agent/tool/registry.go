@@ -15,17 +15,8 @@ import (
 
 	"github.com/Agentropism/vtuber-agent-go/internal/agent/conversation/llm"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
-
-var log = zap.NewNop()
-
-// SetLogger 注入日志器，由 app 在启动时调用。
-func SetLogger(l *zap.Logger) {
-	if l != nil {
-		log = l
-	}
-}
 
 // Handler 执行一次工具调用，返回要回灌给模型的文本。
 type Handler func(ctx context.Context, args json.RawMessage) (string, error)
@@ -123,7 +114,7 @@ func (r *Registry) Execute(ctx context.Context, calls []llm.ToolCall) ([]llm.Mes
 // runOne 执行一次调用，把结果或错误都折成文本。
 func (r *Registry) runOne(ctx context.Context, call llm.ToolCall, handler Handler) string {
 	if handler == nil {
-		log.Sugar().Warnf("模型要求调用未注册的工具: %s", call.Name)
+		logger.Warnf("模型要求调用未注册的工具: %s", call.Name)
 		return fmt.Sprintf("没有名为 %s 的工具", call.Name)
 	}
 
@@ -137,10 +128,10 @@ func (r *Registry) runOne(ctx context.Context, call llm.ToolCall, handler Handle
 
 	result, err := handler(ctx, args)
 	if err != nil {
-		log.Sugar().Warnf("工具 %s 执行失败: %v", call.Name, err)
+		logger.Warnf("工具 %s 执行失败: %v", call.Name, err)
 		return fmt.Sprintf("工具 %s 执行失败: %v", call.Name, err)
 	}
 
-	log.Sugar().Debugf("工具 %s 执行完成，返回 %d 字节", call.Name, len(result))
+	logger.Debugf("工具 %s 执行完成，返回 %d 字节", call.Name, len(result))
 	return result
 }

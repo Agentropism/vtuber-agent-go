@@ -15,7 +15,7 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/stream"
 	"github.com/Agentropism/vtuber-agent-go/internal/tts"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
 
 // streamRuntime 是推流链路：开播取地址 → 虚拟屏渲染 → ffmpeg 推上去。
@@ -26,7 +26,6 @@ type streamRuntime struct {
 	cfg      config.StreamConfig
 	live     stream.LiveConfig
 	renderer *stream.Renderer
-	log      *zap.Logger
 	// loginURL 是扫码登录页地址，只在「未登录」提示里用一次。
 	loginURL string
 	// verifyURL 是开播验证页地址（60024 扫码 / 60043 人脸）。
@@ -53,9 +52,7 @@ type pendingVerify struct {
 	Message  string
 	QR       string // 60024：用 B 站 App 扫这个地址
 	FaceAuth string // 60043：实名/人脸认证页
-	// NeedsAction 表示这次拒绝要用户在手机上做一步（扫码/刷脸），重试更密。
-	NeedsAction bool
-	At          time.Time
+	At       time.Time
 }
 
 // streamStatus 是推流的当前状态，供验证页展示。
@@ -92,7 +89,6 @@ func (r *streamRuntime) setPending(err error) {
 		r.pending.Message = liveErr.Message
 		r.pending.QR = liveErr.QR
 		r.pending.FaceAuth = liveErr.FaceAuth
-		r.pending.NeedsAction = liveErr.NeedsUserAction()
 	}
 }
 
@@ -104,10 +100,10 @@ func needsUserAction(err error) bool {
 }
 
 // provideStream 装配推流链路；未启用 [stream] 时返回 nil。
-func provideStream(cfg *config.Config, log *zap.Logger) (*streamRuntime, error) {
+func provideStream(cfg *config.Config) (*streamRuntime, error) {
 	s := cfg.Stream
 	if !s.Enabled {
-		log.Sugar().Info("未启用 [stream]，跳过推流")
+		logger.Info("未启用 [stream]，跳过推流")
 		return nil, nil
 	}
 	// 推流地址只有两个来源：手填 output，或开播接口拿。开播要 room_id，
@@ -116,20 +112,17 @@ func provideStream(cfg *config.Config, log *zap.Logger) (*streamRuntime, error) 
 		return nil, errors.New("[stream] 已启用，但既没有 output 也没有 room_id：不知道往哪推")
 	}
 
-	stream.SetLogger(log)
-
 	runtime := &streamRuntime{
 		cfg:       s,
 		live:      stream.LiveConfig{RoomID: s.RoomID, AreaID: s.AreaID},
 		loginURL:  loginURL(cfg.Server.Addr),
 		verifyURL: verifyURL(cfg.Server.Addr),
-		log:       log,
 	}
 
 	// renderer 的零值是 false，最容易配漏：screen 模式又不自备显示时，ffmpeg 会以
 	// 「Cannot open display」告终，那句话离真正的原因（少写一行 renderer = true）很远。
 	if !s.Renderer && s.Input != string(stream.InputTest) {
-		log.Sugar().Warnf("未开启 [stream].renderer：需要自备 X 显示 %s（本进程不会起 Xvfb/Chrome）", s.Display)
+		logger.Warnf("未开启 [stream].renderer：需要自备 X 显示 %s（本进程不会起 Xvfb/Chrome）", s.Display)
 	}
 
 	// input = test 用的是 ffmpeg 自带测试画面，不需要虚拟屏与浏览器
@@ -211,9 +204,9 @@ func (r *streamRuntime) Run(ctx context.Context) error {
 			wait = verifyRetryInterval
 		}
 
-		r.log.Sugar().Warnf("推流未建立，%s 后重试: %v", wait, err)
+		logger.Warnf("推流未建立，%s 后重试: %v", wait, err)
 		if needsUserAction(err) {
-			r.log.Sugar().Infof("需要你在手机上完成验证，完成后会自动继续: %s", r.verifyURL)
+			logger.Infof("需要你在手机上完成验证，完成后会自动继续: %s", r.verifyURL)
 		}
 
 		select {
@@ -245,7 +238,7 @@ func (r *streamRuntime) runOnce(ctx context.Context) (bool, error) {
 		VideoBitrate: r.cfg.VideoBitrate,
 		AudioBitrate: r.cfg.AudioBitrate,
 		Encoder:      r.cfg.Encoder,
-		RestartWait:  r.cfg.RestartWait,
+		RestartWait:  r.cfg.RestartWait.Std(),
 	})
 	if err != nil {
 		return started, err
@@ -281,7 +274,7 @@ func (r *streamRuntime) runOnce(ctx context.Context) (bool, error) {
 // resolveOutput 决定推流地址：给了 output 就用它，否则调开播接口拿。
 func (r *streamRuntime) resolveOutput(ctx context.Context) (output string, started bool, err error) {
 	if strings.TrimSpace(r.cfg.Output) != "" {
-		r.log.Sugar().Info("使用 [stream].output 指定的推流地址（不调开播接口）")
+		logger.Info("使用 [stream].output 指定的推流地址（不调开播接口）")
 		return r.cfg.Output, false, nil
 	}
 
@@ -302,7 +295,7 @@ func (r *streamRuntime) resolveOutput(ctx context.Context) (output string, start
 		return "", false, err
 	}
 	r.setPending(nil)
-	r.log.Sugar().Infof("已开播: 直播间 %d", live.RoomID)
+	logger.Infof("已开播: 直播间 %d", live.RoomID)
 
 	return info.Output(), true, nil
 }
@@ -324,7 +317,7 @@ const (
 // 这里必须等而不是直接失败；等到之前每 5 秒重试一次，并在第一次就给出可点的地址。
 func (r *streamRuntime) waitForCookie(ctx context.Context) (string, error) {
 	if cookie := strings.TrimSpace(r.cfg.Cookie); cookie != "" {
-		r.log.Sugar().Info("使用 [stream].cookie 提供的登录态")
+		logger.Info("使用 [stream].cookie 提供的登录态")
 
 		return cookie, nil
 	}
@@ -333,13 +326,13 @@ func (r *streamRuntime) waitForCookie(ctx context.Context) (string, error) {
 	warned := false
 	for {
 		if cookie := stream.LoadLoginCookie(path); cookie != "" {
-			r.log.Sugar().Infof("使用扫码登录保存的登录态: %s", path)
+			logger.Infof("使用扫码登录保存的登录态: %s", path)
 
 			return cookie, nil
 		}
 
 		if !warned {
-			r.log.Sugar().Warnf("未登录：浏览器打开 %s 扫码，或直接填 [stream].cookie（每 %s 重试一次）", r.loginURL, cookieWaitInterval)
+			logger.Warnf("未登录：浏览器打开 %s 扫码，或直接填 [stream].cookie（每 %s 重试一次）", r.loginURL, cookieWaitInterval)
 			warned = true
 		}
 
@@ -357,10 +350,10 @@ func (r *streamRuntime) stopLive() {
 	defer cancel()
 
 	if err := stream.StopLive(ctx, r.live); err != nil {
-		r.log.Sugar().Warnf("关播失败（直播间可能仍显示直播中）: %v", err)
+		logger.Warnf("关播失败（直播间可能仍显示直播中）: %v", err)
 		return
 	}
-	r.log.Sugar().Info("已关播")
+	logger.Info("已关播")
 }
 
 // Close 收尾渲染器（推流管道由 Run 的 defer 关）。
@@ -426,11 +419,10 @@ const silenceChunkMillis = 100
 // 口型与字幕，所以两者是并行投递（见 fanOutSink）。
 type streamSink struct {
 	runtime *streamRuntime
-	log     *zap.Logger
 }
 
-func newStreamSink(runtime *streamRuntime, log *zap.Logger) *streamSink {
-	return &streamSink{runtime: runtime, log: log}
+func newStreamSink(runtime *streamRuntime) *streamSink {
+	return &streamSink{runtime: runtime}
 }
 
 // streamChunkMillis 是每块 PCM 的时长：50ms 够平滑，也不会把等待切得太碎。
@@ -442,7 +434,7 @@ func (s *streamSink) Play(ctx context.Context, item broadcast.Item, pcm []byte) 
 	defer s.runtime.playing.Add(-1)
 
 	seconds := float64(len(pcm)/tts.BytesPerSample) / float64(tts.SampleRate)
-	s.log.Sugar().Infof("[推流] priority=%s source=%s 时长=%.2fs 文本=%s",
+	logger.Infof("[推流] priority=%s source=%s 时长=%.2fs 文本=%s",
 		item.Priority, item.Source, seconds, item.Text)
 
 	chunk := tts.SampleRate * tts.BytesPerSample * streamChunkMillis / 1000

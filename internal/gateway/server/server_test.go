@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/action"
-	"go.uber.org/zap"
 )
 
 func TestSendActionForwardsStandardActionToConfiguredPlatformClient(t *testing.T) {
@@ -16,7 +15,7 @@ func TestSendActionForwardsStandardActionToConfiguredPlatformClient(t *testing.T
 			payload = append([]byte(nil), got...)
 			return nil
 		},
-	}, zap.NewNop())
+	})
 	t.Cleanup(func() { unregisterClient("qq", client) })
 
 	want := action.Action{

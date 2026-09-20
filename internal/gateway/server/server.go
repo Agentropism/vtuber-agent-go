@@ -13,8 +13,8 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/gateway/upload"
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/action"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/coder/websocket"
-	"go.uber.org/zap"
 )
 
 type contextKey string
@@ -43,26 +43,26 @@ type Route struct {
 	Handler http.Handler
 }
 
-func ProvideServer(cfg *config.Config, log *zap.Logger, extra ...Route) *http.Server {
+func ProvideServer(cfg *config.Config, extra ...Route) *http.Server {
 	mux := http.NewServeMux()
 	patterns := make(map[string]string, len(cfg.Clients))
 
 	for _, client := range cfg.Clients {
 		platform := client.Platform
 		if previous, ok := patterns[client.Path]; ok {
-			log.Sugar().Errorf("接入路径 %s 被平台 %s 与 %s 重复占用，跳过后者", client.Path, previous, platform)
+			logger.Errorf("接入路径 %s 被平台 %s 与 %s 重复占用，跳过后者", client.Path, previous, platform)
 			continue
 		}
 		patterns[client.Path] = platform
 		mux.HandleFunc(client.Path, func(w http.ResponseWriter, r *http.Request) {
-			wsHandler(w, r, platform, log)
+			wsHandler(w, r, platform)
 		})
 	}
 
 	// /inject 必须显式注册：客户端路径可以配成 "/"，会兜住所有路径，
 	// 否则注入请求会被当成 WebSocket 握手（405），而不是拿到明确的状态码。
 	mux.HandleFunc("/inject", func(w http.ResponseWriter, r *http.Request) {
-		handleInject(w, r, log)
+		handleInject(w, r)
 	})
 	patterns["/inject"] = "inject"
 
@@ -70,7 +70,7 @@ func ProvideServer(cfg *config.Config, log *zap.Logger, extra ...Route) *http.Se
 	// （重复注册同一个 pattern 会直接 panic，把整个进程带走）。
 	for _, route := range extra {
 		if previous, ok := patterns[route.Pattern]; ok {
-			log.Sugar().Errorf("路由 %s 与 %s 冲突，跳过该额外路由", route.Pattern, previous)
+			logger.Errorf("路由 %s 与 %s 冲突，跳过该额外路由", route.Pattern, previous)
 			continue
 		}
 		patterns[route.Pattern] = "额外路由"
@@ -84,7 +84,7 @@ func ProvideServer(cfg *config.Config, log *zap.Logger, extra ...Route) *http.Se
 	}
 }
 
-func wsHandler(w http.ResponseWriter, r *http.Request, platform string, log *zap.Logger) {
+func wsHandler(w http.ResponseWriter, r *http.Request, platform string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -94,13 +94,13 @@ func wsHandler(w http.ResponseWriter, r *http.Request, platform string, log *zap
 		CompressionMode: websocket.CompressionDisabled,
 	})
 	if err != nil {
-		log.Sugar().Errorf("WebSocket 握手失败: %v", err)
+		logger.Errorf("WebSocket 握手失败: %v", err)
 		return
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "bye")
 
-	log.Sugar().Infof("WebSocket 客户 端已连接 [%s]: %s", platform, r.RemoteAddr)
-	client := registerClient(platform, &clientConnection{conn: conn}, log)
+	logger.Infof("WebSocket 客户 端已连接 [%s]: %s", platform, r.RemoteAddr)
+	client := registerClient(platform, &clientConnection{conn: conn})
 	defer unregisterClient(platform, client)
 
 	ctx := context.WithValue(r.Context(), platformKey, platform)
@@ -110,13 +110,13 @@ func wsHandler(w http.ResponseWriter, r *http.Request, platform string, log *zap
 			// 客户端正常挂断是常态（重启、断网），不该按错误打堆栈刷屏
 			if status := websocket.CloseStatus(err); status == websocket.StatusNormalClosure ||
 				status == websocket.StatusGoingAway {
-				log.Sugar().Infof("WebSocket 客户端已断开 [%s]", platform)
+				logger.Infof("WebSocket 客户端已断开 [%s]", platform)
 				return
 			}
-			log.Sugar().Errorf("WebSocket 读取已结束: %v", err)
+			logger.Errorf("WebSocket 读取已结束: %v", err)
 			return
 		}
-		log.Sugar().Debugf("收到 [%s] 消息: %d 字节", platform, len(msg))
+		logger.Debugf("收到 [%s] 消息: %d 字节", platform, len(msg))
 
 		// 本次分发的上传暂存区；先给出 Action，再放行上传请求获取远程写锁
 		dispatchCtx := upload.BeginDispatch(ctx)
@@ -126,11 +126,11 @@ func wsHandler(w http.ResponseWriter, r *http.Request, platform string, log *zap
 		if act.Action != "" {
 			resp, err := json.Marshal(act)
 			if err != nil {
-				log.Sugar().Warnf("序列化响应失败: %v", err)
+				logger.Warnf("序列化响应失败: %v", err)
 			} else if err := client.write(ctx, resp); err != nil {
-				log.Sugar().Errorf("WebSocket 写入失败: %v", err)
+				logger.Errorf("WebSocket 写入失败: %v", err)
 				// Action 写回失败（未给出），仍放行本事件上传：行为保持「所有事件仍上传」，且 Action 从未送达、无顺序违例
-				log.Sugar().Warn("Action 写回失败，仍放行上传")
+				logger.Warn("Action 写回失败，仍放行上传")
 				upload.FinishDispatch(dispatchCtx)
 				return
 			}
@@ -168,13 +168,13 @@ func SendAction(platform string, act action.Action) error {
 	return nil
 }
 
-func registerClient(platform string, client *clientConnection, log *zap.Logger) *clientConnection {
+func registerClient(platform string, client *clientConnection) *clientConnection {
 	clients.Lock()
 	previous := clients.connections[platform]
 	clients.connections[platform] = client
 	clients.Unlock()
 	if previous != nil {
-		log.Sugar().Warnf("平台 %s 已有连接，新连接将接收远程 Action", platform)
+		logger.Warnf("平台 %s 已有连接，新连接将接收远程 Action", platform)
 	}
 	return client
 }

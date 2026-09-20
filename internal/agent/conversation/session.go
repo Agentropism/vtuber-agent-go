@@ -17,17 +17,8 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/emotion"
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/event"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
-
-var log = zap.NewNop()
-
-// SetLogger 注入日志器，由 app.Initialize() 调用。
-func SetLogger(l *zap.Logger) {
-	if l != nil {
-		log = l
-	}
-}
 
 // SetLogger 之外：平台名与渠道类型取自上传事件信封的既有取值。
 const (
@@ -84,7 +75,7 @@ type platformEventPayload struct {
 func ParseInbound(payload []byte) (InboundEvent, bool) {
 	var envelope platformEventPayload
 	if err := json.Unmarshal(payload, &envelope); err != nil {
-		log.Sugar().Warnf("解析事件信封失败: %v", err)
+		logger.Warnf("解析事件信封失败: %v", err)
 		return InboundEvent{}, false
 	}
 
@@ -251,14 +242,14 @@ func (s *Sessions) Handle(payload []byte) {
 
 	current, err := s.sessionFor(event.ChannelID)
 	if err != nil {
-		log.Sugar().Warnf("会话不可用，丢弃事件: %v", err)
+		logger.Warnf("会话不可用，丢弃事件: %v", err)
 		return
 	}
 
 	select {
 	case current.in <- event:
 	default:
-		log.Sugar().Warnf("会话 %s 队列已满，丢弃事件 message_id=%s", event.ChannelID, event.MessageID)
+		logger.Warnf("会话 %s 队列已满，丢弃事件 message_id=%s", event.ChannelID, event.MessageID)
 	}
 }
 
@@ -300,7 +291,7 @@ func (s *Sessions) sessionFor(channelID string) (*session, error) {
 	current.wg.Add(1)
 	go current.run()
 
-	log.Sugar().Infof("已为渠道 %s 创建会话", channelID)
+	logger.Infof("已为渠道 %s 创建会话", channelID)
 	return current, nil
 }
 
@@ -327,7 +318,7 @@ func (s *Sessions) Close() {
 	}
 	s.idleWg.Wait()
 
-	log.Sugar().Info("会话管理器已关闭")
+	logger.Info("会话管理器已关闭")
 }
 
 // run 串行消费本渠道的消息。
@@ -369,7 +360,7 @@ func (s *session) turn(event InboundEvent) {
 	if err != nil {
 		// 出错时不发送半截文本回复；已经逐句入队的部分仍会播出去，
 		// 这是流式投递的固有语义。
-		log.Sugar().Errorf("渠道 %s 会话生成失败: %v", s.channel, err)
+		logger.Errorf("渠道 %s 会话生成失败: %v", s.channel, err)
 		return
 	}
 
@@ -379,7 +370,7 @@ func (s *session) turn(event InboundEvent) {
 
 	text := strings.TrimSpace(reply.String())
 	if text == "" {
-		log.Sugar().Warnf("渠道 %s 生成内容为空，不回复", s.channel)
+		logger.Warnf("渠道 %s 生成内容为空，不回复", s.channel)
 		return
 	}
 
@@ -476,7 +467,7 @@ func (s *session) enqueue(event InboundEvent, text string) {
 		Source:   event.Platform + ":" + event.ChannelID,
 	}
 	if !s.cfg.Broadcast.Enqueue(item) {
-		log.Sugar().Warnf("播报队列拒绝入队: source=%s priority=%s", item.Source, item.Priority)
+		logger.Warnf("播报队列拒绝入队: source=%s priority=%s", item.Source, item.Priority)
 	}
 }
 
@@ -486,18 +477,18 @@ func (s *session) send(event InboundEvent, text string) {
 	if !ok {
 		// 平台没有下行动作是常态（B 站弹幕没有发送接口），只播报不发送；
 		// 这里用 Debug，免得每句回复都刷一条像是出错的告警。
-		log.Sugar().Debugf("渠道 %s 所在平台没有下行动作，回复只播报不发送", s.channel)
+		logger.Debugf("渠道 %s 所在平台没有下行动作，回复只播报不发送", s.channel)
 		return
 	}
 	if s.cfg.Reply == nil {
-		log.Sugar().Warn("未注入回复下行函数，回复未发送")
+		logger.Warn("未注入回复下行函数，回复未发送")
 		return
 	}
 	if err := s.cfg.Reply(event.Platform, act); err != nil {
-		log.Sugar().Errorf("发送回复失败: %v", err)
+		logger.Errorf("发送回复失败: %v", err)
 		return
 	}
-	log.Sugar().Infof("已回复渠道 %s: %s", s.channel, text)
+	logger.Infof("已回复渠道 %s: %s", s.channel, text)
 }
 
 // buildReply 把回复文本转成平台下行 Action。

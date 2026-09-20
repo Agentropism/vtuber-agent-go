@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/config"
-
-	"go.uber.org/zap"
 )
 
 func TestHandleInjectEnqueuesTrimmedTextWithEmotion(t *testing.T) {
@@ -22,7 +20,7 @@ func TestHandleInjectEnqueuesTrimmedTextWithEmotion(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"text":"  测试注入  ","emotion":"joy"}`)
-	handleInject(rec, httptest.NewRequest(http.MethodPost, "/inject", body), zap.NewNop())
+	handleInject(rec, httptest.NewRequest(http.MethodPost, "/inject", body))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("状态码 = %d, want 200，响应体 %s", rec.Code, rec.Body.String())
@@ -60,7 +58,7 @@ func TestHandleInjectRejections(t *testing.T) {
 
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(tc.method, "/inject", strings.NewReader(tc.body))
-			handleInject(rec, req, zap.NewNop())
+			handleInject(rec, req)
 
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("状态码 = %d, want %d，响应体 %s", rec.Code, tc.wantStatus, rec.Body.String())
@@ -78,7 +76,7 @@ func TestProvideServerRoutesInjectBeforeCatchAllClientPath(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Clients = []config.ClientConfig{{Platform: "qq", AdapterKey: "onebot_v11", Path: "/"}}
 
-	srv := ProvideServer(cfg, zap.NewNop())
+	srv := ProvideServer(cfg)
 	rec := httptest.NewRecorder()
 	body := strings.NewReader(`{"text":"测试"}`)
 	srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/inject", body))

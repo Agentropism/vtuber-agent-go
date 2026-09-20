@@ -15,18 +15,14 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/agent/memory"
 	"github.com/Agentropism/vtuber-agent-go/internal/agent/tool"
 	"github.com/Agentropism/vtuber-agent-go/internal/config"
-	"github.com/Agentropism/vtuber-agent-go/internal/gateway/event"
 	"github.com/Agentropism/vtuber-agent-go/internal/gateway/server"
 	"github.com/Agentropism/vtuber-agent-go/internal/gateway/upload"
 	"github.com/Agentropism/vtuber-agent-go/internal/logger"
-
-	"go.uber.org/zap"
 )
 
 // App 是装配完成的进程：一个 HTTP 服务。
 type App struct {
 	Server *http.Server
-	log    *zap.Logger
 	stream *streamRuntime
 }
 
@@ -41,8 +37,7 @@ func Initialize() (*App, error) {
 		return nil, err
 	}
 
-	log, err := logger.ProvideLogger(cfg)
-	if err != nil {
+	if _, err := logger.ProvideLogger(cfg); err != nil {
 		return nil, err
 	}
 
@@ -52,30 +47,28 @@ func Initialize() (*App, error) {
 		return nil, err
 	}
 	if character.Name != "" {
-		log.Sugar().Infof("已加载角色: %s（Live2D 模型 %s）", character.Name, character.Live2DModel)
+		logger.Infof("已加载角色: %s（Live2D 模型 %s）", character.Name, character.Live2DModel)
 	}
 
-	upload.SetLogger(log)
-
 	// 前端接入：浏览器页面 + /client-ws + 模型静态资源；未配置时为 nil
-	front, err := provideFrontend(cfg, character, log)
+	front, err := provideFrontend(cfg, character)
 	if err != nil {
 		return nil, err
 	}
 
 	// 推流：开播取地址 + 虚拟屏渲染 + ffmpeg 推 RTMP；未启用 [stream] 时为 nil
-	streaming, err := provideStream(cfg, log)
+	streaming, err := provideStream(cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	// 扫码登录：只为推流取开播凭据，未启用 [stream] 时为 nil
-	login := provideLogin(cfg, log, streaming)
+	login := provideLogin(cfg, streaming)
 	if login != nil {
-		log.Sugar().Infof("扫码登录页（仅本机可访问）: %s", loginURL(cfg.Server.Addr))
+		logger.Infof("扫码登录页（仅本机可访问）: %s", loginURL(cfg.Server.Addr))
 	}
 	// 语音播报：TTS 引擎链 + 统一播报队列；未配置 [tts].engines 时为 nil
-	queue, err := provideBroadcast(cfg, log, front, streaming)
+	queue, err := provideBroadcast(cfg, front, streaming)
 	if err != nil {
 		return nil, err
 	}
@@ -85,17 +78,17 @@ func Initialize() (*App, error) {
 	}
 
 	// 长期记忆：JSON Lines 存储 + 关键词召回；未配置路径时为 nil
-	store, err := provideMemory(cfg, log)
+	store, err := provideMemory(cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	// 工具注册层：记忆检索与状态查询，交给会话层的工具调用循环驱动
-	registry := provideTools(cfg, log, store, front, queue, started)
+	registry := provideTools(cfg, store, front, queue, started)
 
 	// 事件终端改为进程内 agent 会话：上传管线只负责去重、敏感词与背压，
 	// 出口是本地方法调用，不再连远端 WebSocket。
-	sessions, err := provideSessions(cfg, log, character, queue, front, store, registry)
+	sessions, err := provideSessions(cfg, character, queue, front, store, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -105,22 +98,21 @@ func Initialize() (*App, error) {
 
 	if err := upload.Init(upload.Options{
 		QueueSize:          cfg.Memory.QueueSize,
-		QueueWaitTimeout:   cfg.Memory.QueueWaitTimeout,
+		QueueWaitTimeout:   cfg.Memory.QueueWaitTimeout.Std(),
 		SensitiveWordsFile: cfg.Memory.SensitiveWordsFile,
-		DedupTTL:           cfg.Memory.DedupTTL,
+		DedupTTL:           cfg.Memory.DedupTTL.Std(),
 	}); err != nil {
 		return nil, err
 	}
 
 	Register()
-	event.SetLogger(log)
 
 	routes := frontendRoutes(front)
 	if login != nil {
 		routes = append(routes, login.routes()...)
 	}
 
-	return &App{Server: server.ProvideServer(cfg, log, routes...), log: log, stream: streaming}, nil
+	return &App{Server: server.ProvideServer(cfg, routes...), stream: streaming}, nil
 }
 
 // frontendRoutes 把前端接入挂到网关 mux 上。
@@ -159,7 +151,7 @@ func (a *App) Run(ctx context.Context) error {
 		go func() {
 			defer streaming.Done()
 			if err := a.stream.Run(ctx); err != nil && ctx.Err() == nil {
-				a.log.Sugar().Errorf("推流已停止: %v", err)
+				logger.Errorf("推流已停止: %v", err)
 			}
 		}()
 
@@ -172,7 +164,7 @@ func (a *App) Run(ctx context.Context) error {
 			select {
 			case <-done:
 			case <-time.After(shutdownTimeout):
-				a.log.Sugar().Warn("等推流收尾超时，关播可能未完成")
+				logger.Warn("等推流收尾超时，关播可能未完成")
 			}
 		}()
 	}
@@ -181,7 +173,7 @@ func (a *App) Run(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		a.log.Sugar().Info("收到退出信号，正在停止服务")
+		logger.Info("收到退出信号，正在停止服务")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -201,7 +193,6 @@ func (a *App) Run(ctx context.Context) error {
 // 系统提示词的优先级：角色文件的 system_prompt > [agent].system_prompt > 内置兜底值。
 func provideSessions(
 	cfg *config.Config,
-	log *zap.Logger,
 	character config.Character,
 	queue *broadcast.Queue,
 	front *frontend.Frontend,
@@ -209,7 +200,7 @@ func provideSessions(
 	registry *tool.Registry,
 ) (*conversation.Sessions, error) {
 	if cfg.LLM.BaseURL == "" || cfg.LLM.Model == "" {
-		log.Sugar().Warn("未配置 [llm] 的 base_url / model，跳过 agent 会话初始化，事件不会被处理")
+		logger.Warn("未配置 [llm] 的 base_url / model，跳过 agent 会话初始化，事件不会被处理")
 		return nil, nil
 	}
 
@@ -228,8 +219,6 @@ func provideSessions(
 		return nil, fmt.Errorf("创建 LLM 客户端: %w", err)
 	}
 
-	conversation.SetLogger(log)
-
 	sessionsCfg := conversation.SessionsConfig{
 		LLM:              client,
 		System:           system,
@@ -238,7 +227,7 @@ func provideSessions(
 		MaxHistoryTurns:  cfg.Agent.HistoryMaxTurns,
 		MaxHistoryTokens: cfg.Agent.HistoryMaxTokens,
 		QueueSize:        cfg.Agent.QueueSize,
-		TurnTimeout:      cfg.Agent.TurnTimeout,
+		TurnTimeout:      cfg.Agent.TurnTimeout.Std(),
 		Reply:            server.SendAction,
 	}
 	// 注意：typed nil 装进接口后不等于 nil，必须先判空
@@ -250,14 +239,14 @@ func provideSessions(
 		sessionsCfg.Emotions = front.Emotions()
 	}
 	if store != nil {
-		sessionsCfg.Memory = memoryAdapter{store: store, log: log}
+		sessionsCfg.Memory = memoryAdapter{store: store}
 		sessionsCfg.RecallLimit = cfg.Agent.RecallLimit
 	}
 	if registry != nil {
 		sessionsCfg.Tools = registry.Tools()
 		sessionsCfg.ToolExecutor = registry
 	}
-	sessionsCfg.IdleSpeakInterval = cfg.Agent.IdleSpeakInterval
+	sessionsCfg.IdleSpeakInterval = cfg.Agent.IdleSpeakInterval.Std()
 	sessionsCfg.IdleSpeakPrompt = cfg.Agent.IdleSpeakPrompt
 
 	sessions, err := conversation.NewSessions(sessionsCfg)
@@ -265,6 +254,6 @@ func provideSessions(
 		return nil, fmt.Errorf("创建会话管理器: %w", err)
 	}
 
-	log.Sugar().Infof("agent 会话已启用: model=%s base_url=%s", cfg.LLM.Model, cfg.LLM.BaseURL)
+	logger.Infof("agent 会话已启用: model=%s base_url=%s", cfg.LLM.Model, cfg.LLM.BaseURL)
 	return sessions, nil
 }

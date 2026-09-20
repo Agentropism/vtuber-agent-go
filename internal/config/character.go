@@ -2,9 +2,10 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
-	"github.com/spf13/viper"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // Character 是一个角色定义。
@@ -13,10 +14,10 @@ import (
 // 角色是资产而不是部署配置——换角色不该动端口、凭据这类部署参数，而人设提示词、
 // 头像、Live2D 模型名是一组必须一起换的东西。
 type Character struct {
-	Name         string `mapstructure:"name"`          // 显示名
-	Avatar       string `mapstructure:"avatar"`        // 头像文件名，前端展示用
-	Live2DModel  string `mapstructure:"live2d_model"`  // Live2D 模型目录名，前端加载用
-	SystemPrompt string `mapstructure:"system_prompt"` // 人设系统提示词
+	Name         string `toml:"name"`          // 显示名
+	Avatar       string `toml:"avatar"`        // 头像文件名，前端展示用
+	Live2DModel  string `toml:"live2d_model"`  // Live2D 模型目录名，前端加载用
+	SystemPrompt string `toml:"system_prompt"` // 人设系统提示词
 }
 
 // LoadCharacter 读取角色定义文件（TOML）。
@@ -28,15 +29,12 @@ func LoadCharacter(path string) (Character, error) {
 		return character, nil
 	}
 
-	v := viper.New()
-	v.SetConfigFile(path)
-	v.SetConfigType("toml")
-	if err := v.ReadInConfig(); err != nil {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return character, fmt.Errorf("读取角色定义 %s: %w", path, err)
 	}
-	if err := v.Unmarshal(&character); err != nil {
+	if err := toml.Unmarshal(data, &character); err != nil {
 		return character, fmt.Errorf("解析角色定义 %s: %w", path, err)
 	}
-
 	return character, nil
 }

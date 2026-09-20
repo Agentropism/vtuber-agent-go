@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/emotion"
 )
 
@@ -79,7 +80,7 @@ type modelInfo struct {
 // 读不到就扫描 modelsDir 下的 <模型名>/runtime/*.model3.json 兜底，此时表情词表用内置默认值。
 func loadCatalog(dictPath, modelsDir, want string) (modelEntry, *emotion.Map, error) {
 	if entries, err := readModelDict(dictPath); err != nil {
-		log.Sugar().Warnf("读取模型清单 %s 失败，改为扫描模型目录: %v", dictPath, err)
+		logger.Warnf("读取模型清单 %s 失败，改为扫描模型目录: %v", dictPath, err)
 	} else if len(entries) > 0 {
 		entry := pickModel(entries, want)
 		return entry, emotion.NewMap(entry.EmotionMap), nil
@@ -124,7 +125,7 @@ func pickModel(entries []modelEntry, want string) modelEntry {
 				return entry
 			}
 		}
-		log.Sugar().Warnf("模型清单里没有 %q，改用 %q", want, entries[0].Name)
+		logger.Warnf("模型清单里没有 %q，改用 %q", want, entries[0].Name)
 	}
 
 	return entries[0]
@@ -167,7 +168,7 @@ func loadExpressionNames(modelsDir, url string) []string {
 	relative := strings.TrimPrefix(url, "/live2d-models/")
 	raw, err := os.ReadFile(filepath.Join(modelsDir, filepath.FromSlash(relative)))
 	if err != nil {
-		log.Sugar().Debugf("读取模型文件失败，跳过表达式清单: %v", err)
+		logger.Debugf("读取模型文件失败，跳过表达式清单: %v", err)
 		return nil
 	}
 
@@ -179,7 +180,7 @@ func loadExpressionNames(modelsDir, url string) []string {
 		} `json:"FileReferences"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		log.Sugar().Debugf("解析模型文件失败，跳过表达式清单: %v", err)
+		logger.Debugf("解析模型文件失败，跳过表达式清单: %v", err)
 		return nil
 	}
 

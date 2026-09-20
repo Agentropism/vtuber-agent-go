@@ -7,6 +7,7 @@ import (
 
 	"github.com/Agentropism/vtuber-agent-go/internal/agent/broadcast"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 	"github.com/Agentropism/vtuber-agent-go/internal/shared/emotion"
 )
 
@@ -43,7 +44,7 @@ type speakData struct {
 // Play 把一段播报送到所有前端，并等它播完。
 func (s *Sink) Play(ctx context.Context, item broadcast.Item, pcm []byte) error {
 	if s.hub.count() == 0 {
-		log.Sugar().Debugf("没有前端连接，跳过播报: %s", item.Text)
+		logger.Debugf("没有前端连接，跳过播报: %s", item.Text)
 		return nil
 	}
 
@@ -66,7 +67,7 @@ func (s *Sink) Play(ctx context.Context, item broadcast.Item, pcm []byte) error 
 		},
 	})
 	if sent == 0 {
-		log.Sugar().Warnf("播报没有送达任何前端: %s", item.Text)
+		logger.Warnf("播报没有送达任何前端: %s", item.Text)
 		return nil
 	}
 
@@ -82,7 +83,7 @@ func (s *Sink) Play(ctx context.Context, item broadcast.Item, pcm []byte) error 
 	case <-waiter:
 		return nil
 	case <-timer.C:
-		log.Sugar().Warnf("等待前端播完超时（%s）: %s", timeout.Round(time.Millisecond), item.Text)
+		logger.Warnf("等待前端播完超时（%s）: %s", timeout.Round(time.Millisecond), item.Text)
 		return nil
 	}
 }
@@ -98,7 +99,7 @@ func (s *Sink) expression(item broadcast.Item) int {
 
 	index, ok := s.emotions.Index(item.Emotion)
 	if !ok {
-		log.Sugar().Warnf("表情标签不在当前模型的 emo_map 里，忽略: %s", item.Emotion)
+		logger.Warnf("表情标签不在当前模型的 emo_map 里，忽略: %s", item.Emotion)
 		return -1
 	}
 

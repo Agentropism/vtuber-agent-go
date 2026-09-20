@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -72,7 +73,7 @@ func TestPollLoginStates(t *testing.T) {
 					// 设备指纹 cookie：风控靠它判断「像不像已知浏览器会话」，必须一起留下来
 					http.SetCookie(w, &http.Cookie{Name: "buvid3", Value: "fp-a"})
 				}
-				_, _ = w.Write([]byte(`{"code":0,"data":{"code":` + itoa(tc.code) + `,"message":"msg"}}`))
+				_, _ = w.Write([]byte(`{"code":0,"data":{"code":` + strconv.Itoa(tc.code) + `,"message":"msg"}}`))
 			}))
 			defer server.Close()
 
@@ -155,24 +156,6 @@ func TestSaveAndLoadLoginCookie(t *testing.T) {
 	if got := LoadLoginCookie(filepath.Join(t.TempDir(), "missing.txt")); got != "" {
 		t.Fatalf("文件不存在应返回空串，得到 %q", got)
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	sign := ""
-	if n < 0 {
-		sign = "-"
-		n = -n
-	}
-	var digits []byte
-	for n > 0 {
-		digits = append([]byte{byte('0' + n%10)}, digits...)
-		n /= 10
-	}
-
-	return sign + string(digits)
 }
 
 // 带 jar 的客户端必须把 generate 阶段下发的指纹 cookie 一起带进最终凭据。

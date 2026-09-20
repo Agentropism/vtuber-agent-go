@@ -12,7 +12,7 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/gateway/server"
 	"github.com/Agentropism/vtuber-agent-go/internal/tts"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
 
 // errBroadcastQueueFull 是队列拒收注入条目的原因，会作为 503 的错误信息返回。
@@ -22,14 +22,11 @@ var errBroadcastQueueFull = errors.New("播报队列已满，注入内容被丢�
 //
 // 未配置 [tts].engines 时返回 nil：此时会话只做文本下行，不产生语音播报。
 // 投递目标由 pickSink 决定：推流与浏览器可以并存（扇出），都没有时退回只记日志的占位实现。
-func provideBroadcast(cfg *config.Config, log *zap.Logger, front *frontend.Frontend, streaming *streamRuntime) (*broadcast.Queue, error) {
+func provideBroadcast(cfg *config.Config, front *frontend.Frontend, streaming *streamRuntime) (*broadcast.Queue, error) {
 	if len(cfg.TTS.Engines) == 0 {
-		log.Sugar().Info("未配置 [tts].engines，跳过语音播报")
+		logger.Info("未配置 [tts].engines，跳过语音播报")
 		return nil, nil
 	}
-
-	tts.SetLogger(log)
-	broadcast.SetLogger(log)
 
 	engines := make([]tts.Engine, 0, len(cfg.TTS.Engines))
 	for _, name := range cfg.TTS.Engines {
@@ -41,20 +38,20 @@ func provideBroadcast(cfg *config.Config, log *zap.Logger, front *frontend.Front
 	}
 	chain := tts.NewChain(engines...)
 
-	sink := pickSink(log, front, streaming)
+	sink := pickSink(front, streaming)
 
 	queue, err := broadcast.New(broadcast.Config{
 		Synth:       chain,
 		Sink:        sink,
 		Concurrency: cfg.Broadcast.Concurrency,
 		MaxPending:  cfg.Broadcast.MaxPending,
-		MinInterval: cfg.Broadcast.MinInterval,
+		MinInterval: cfg.Broadcast.MinInterval.Std(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("创建播报队列: %w", err)
 	}
 
-	log.Sugar().Infof("语音播报已启用: 引擎降级顺序=%v", chain.Names())
+	logger.Infof("语音播报已启用: 引擎降级顺序=%v", chain.Names())
 	return queue, nil
 }
 
@@ -157,11 +154,11 @@ func wrapEngineError(name string, engine tts.Engine, err error) (tts.Engine, err
 //
 // 它不真正播放，但会按音频时长等待，因此播报队列的抢占、冷却与并行合成
 // 仍按真实时序运转；配了 [frontend] 时换成 agent/frontend 的真实 Sink。
-type logSink struct{ log *zap.Logger }
+type logSink struct{}
 
 func (s *logSink) Play(ctx context.Context, item broadcast.Item, pcm []byte) error {
 	seconds := float64(len(pcm)/tts.BytesPerSample) / float64(tts.SampleRate)
-	s.log.Sugar().Infof("[播报] priority=%s source=%s emotion=%q 时长=%.2fs 文本=%s",
+	logger.Infof("[播报] priority=%s source=%s emotion=%q 时长=%.2fs 文本=%s",
 		item.Priority, item.Source, item.Emotion, seconds, item.Text)
 
 	select {
@@ -176,10 +173,10 @@ func (s *logSink) Play(ctx context.Context, item broadcast.Item, pcm []byte) err
 //
 // 推流与浏览器是并行的两条路，不是二选一：Chrome 里那个页面要靠 speak 驱动口型
 // 与字幕，而推流管道要的是同一段 PCM，两者同时启用时扇出。
-func pickSink(log *zap.Logger, front *frontend.Frontend, streaming *streamRuntime) broadcast.Sink {
+func pickSink(front *frontend.Frontend, streaming *streamRuntime) broadcast.Sink {
 	var sinks []broadcast.Sink
 	if streaming != nil {
-		sinks = append(sinks, newStreamSink(streaming, log))
+		sinks = append(sinks, newStreamSink(streaming))
 	}
 	if front != nil {
 		sinks = append(sinks, front.Sink())
@@ -187,7 +184,7 @@ func pickSink(log *zap.Logger, front *frontend.Frontend, streaming *streamRuntim
 
 	switch len(sinks) {
 	case 0:
-		return &logSink{log: log}
+		return &logSink{}
 	case 1:
 		return sinks[0]
 	default:

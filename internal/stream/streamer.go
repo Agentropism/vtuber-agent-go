@@ -31,29 +31,22 @@ import (
 	"syscall"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/Agentropism/vtuber-agent-go/internal/logger"
 )
-
-var log = zap.NewNop()
-
-// SetLogger 注入日志器。
-func SetLogger(l *zap.Logger) {
-	if l != nil {
-		log = l
-	}
-}
 
 // 默认参数。
 const (
-	defaultFFmpeg      = "ffmpeg"
-	defaultDisplay     = ":99"
-	defaultWidth       = 1280
-	defaultHeight      = 720
-	defaultFPS         = 30
-	defaultVideoRate   = "2500k"
-	defaultAudioRate   = "128k"
-	defaultPreset      = "veryfast"
-	defaultSampleRate  = 24000
+	defaultFFmpeg     = "ffmpeg"
+	defaultDisplay    = ":99"
+	defaultWidth      = 1280
+	defaultHeight     = 720
+	defaultFPS        = 30
+	defaultVideoRate  = "2500k"
+	defaultAudioRate  = "128k"
+	defaultPreset     = "veryfast"
+	defaultSampleRate = 24000
+	// audioChannels 是写进管道的声道数：tts 契约是单声道。
+	audioChannels      = 1
 	defaultKeyInterval = 60
 	defaultRestartWait = 5 * time.Second
 
@@ -89,13 +82,10 @@ type Config struct {
 
 	VideoBitrate string // 默认 2500k
 	AudioBitrate string // 默认 128k
-	Preset       string // x264 preset，默认 veryfast
 	// Encoder 默认 libx264；有 N 卡可换 h264_nvenc。
 	Encoder string
 
-	// SampleRate / Channels 是写入管道的 PCM 格式，默认 24000 / 1（与 tts 契约一致）。
-	SampleRate int
-	Channels   int
+	// 写进管道的 PCM 格式固定为 24kHz 单声道（tts 契约），不开放配置。
 
 	// RestartWait 是 ffmpeg 异常退出后的重启间隔，默认 5s；<0 表示不重启。
 	RestartWait time.Duration
@@ -126,17 +116,8 @@ func (c Config) withDefaults() Config {
 	if c.AudioBitrate == "" {
 		c.AudioBitrate = defaultAudioRate
 	}
-	if c.Preset == "" {
-		c.Preset = defaultPreset
-	}
 	if c.Encoder == "" {
 		c.Encoder = "libx264"
-	}
-	if c.SampleRate <= 0 {
-		c.SampleRate = defaultSampleRate
-	}
-	if c.Channels <= 0 {
-		c.Channels = 1
 	}
 	if c.RestartWait == 0 {
 		c.RestartWait = defaultRestartWait
@@ -229,14 +210,14 @@ func (s *Streamer) Args() []string {
 	// 音频输入：命名管道，由 WritePCM 写入
 	args = append(args,
 		"-f", "s16le",
-		"-ar", strconv.Itoa(cfg.SampleRate),
-		"-ac", strconv.Itoa(cfg.Channels),
+		"-ar", strconv.Itoa(defaultSampleRate),
+		"-ac", strconv.Itoa(audioChannels),
 		"-i", s.audioPath,
 	)
 
 	args = append(args,
 		"-c:v", cfg.Encoder,
-		"-preset", cfg.Preset,
+		"-preset", defaultPreset,
 		"-b:v", cfg.VideoBitrate,
 		"-maxrate", cfg.VideoBitrate,
 		"-bufsize", cfg.VideoBitrate,
@@ -274,14 +255,14 @@ func (s *Streamer) Run(ctx context.Context) error {
 	for {
 		err := s.runOnce(ctx)
 		if ctx.Err() != nil {
-			log.Sugar().Info("推流已停止")
+			logger.Info("推流已停止")
 			return ctx.Err()
 		}
 		if s.cfg.RestartWait < 0 {
 			return err
 		}
 
-		log.Sugar().Warnf("推流中断: %v；%s 后重试", err, s.cfg.RestartWait)
+		logger.Warnf("推流中断: %v；%s 后重试", err, s.cfg.RestartWait)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -298,7 +279,7 @@ func (s *Streamer) runOnce(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("启动 ffmpeg: %w", err)
 	}
-	log.Sugar().Infof("推流已启动: %dx%d@%dfps %s → %s",
+	logger.Infof("推流已启动: %dx%d@%dfps %s → %s",
 		s.cfg.Width, s.cfg.Height, s.cfg.FPS, s.cfg.Encoder, clipURL(s.cfg.Output))
 
 	waitErr := cmd.Wait()
@@ -334,7 +315,7 @@ func (s *Streamer) WritePCM(pcm []byte) {
 	_, _ = file.Write(pcm)
 }
 
-// logWriter 把子进程的 stderr 转成 zap 日志。
+// logWriter 把子进程的 stderr 接进本进程的日志。
 //
 // name 必须按进程给：三个子进程（Xvfb / Chrome / ffmpeg）共用这个类型，
 // 早先写死 "ffmpeg:" 前缀，Chrome 的 GPU 报错被记成 ffmpeg 的，排查时误导过一轮。
@@ -342,7 +323,7 @@ type logWriter struct{ name string }
 
 func (w *logWriter) Write(p []byte) (int, error) {
 	if text := strings.TrimSpace(string(p)); text != "" {
-		log.Sugar().Debugf("%s: %s", w.name, text)
+		logger.Debugf("%s: %s", w.name, text)
 	}
 
 	return len(p), nil
@@ -350,8 +331,8 @@ func (w *logWriter) Write(p []byte) (int, error) {
 
 // clipURL 隐去推流地址里的密钥，日志与错误里都不能出现它。
 func clipURL(url string) string {
-	if index := strings.Index(url, "key="); index >= 0 {
-		return url[:index] + "key=***"
+	if before, _, found := strings.Cut(url, "key="); found {
+		return before + "key=***"
 	}
 
 	return url
