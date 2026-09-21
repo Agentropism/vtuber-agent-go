@@ -463,7 +463,7 @@ const verifyPageHTML = `{{define "verify"}}<!DOCTYPE html>
     <h1>开播验证</h1>
     {{if .Streaming}}
       <p class="ok">推流已在进行中，无需操作。</p>
-      <p><a href="/web/">打开画面页</a></p>
+      <p><a href="/">打开画面页</a></p>
     {{else if .QRURL}}
       <p>本次开播需要身份验证：用<b>哔哩哔哩 App</b> 扫码完成，完成后这里会自动继续。</p>
       <img class="qr" src="{{.QRURL}}" alt="验证二维码">

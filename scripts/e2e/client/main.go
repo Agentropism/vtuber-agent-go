@@ -4,7 +4,7 @@
 //
 //	第 1 轮  普通弹幕       → 流式回复切句 → 2 句播报
 //	第 2 轮  触发工具的弹幕 → memory_search 工具调用 → 最终答复 → 1 句播报
-//	第 3 轮  POST /inject   → 注入播报（带表情）
+//	第 3 轮  POST /api/speak → 注入播报（带表情）
 //	第 4 轮  静默           → 主动发言，最低优先级
 //
 // 每收到一条播报都校验音频是合法的 24kHz 单声道 PCM WAV，并回执
@@ -62,7 +62,7 @@ func run(addr string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*speakTimeout)
 	defer cancel()
 
-	front, err := dial(ctx, "ws://"+addr+"/client-ws")
+	front, err := dial(ctx, "ws://"+addr+"/api/client-ws")
 	if err != nil {
 		return fmt.Errorf("连接前端通道: %w", err)
 	}
@@ -118,7 +118,7 @@ func run(addr string) error {
 	if injected.Emotion != joyExpression {
 		return fmt.Errorf("注入播报的表情下标 = %d, want %d（mao_pro 的 joy）", injected.Emotion, joyExpression)
 	}
-	fmt.Println("第 3 轮通过：/inject → 注入播报（带表情）")
+	fmt.Println("第 3 轮通过：/api/speak → 注入播报（带表情）")
 
 	// 第 4 轮：静默一会儿，等主动发言（最低优先级）
 	idle, err := awaitSpeak(ctx, front, "主动发言", func(speak speakData) bool {
@@ -245,14 +245,14 @@ func checkAudio(speak speakData) error {
 func inject(addr, text, emotion string) error {
 	body, _ := json.Marshal(map[string]any{"text": text, "emotion": emotion})
 
-	resp, err := http.Post("http://"+addr+"/inject", "application/json", bytes.NewReader(body))
+	resp, err := http.Post("http://"+addr+"/api/speak", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("调用 /inject: %w", err)
+		return fmt.Errorf("调用 /api/speak: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("/inject 返回 %d", resp.StatusCode)
+		return fmt.Errorf("/api/speak 返回 %d", resp.StatusCode)
 	}
 
 	return nil

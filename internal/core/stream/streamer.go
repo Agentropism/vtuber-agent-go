@@ -2,7 +2,7 @@
 //
 // 设计前提（都经过实测确认）：
 //
-//   - /client-ws 上没有视频，只有文本、表情下标与 base64 WAV。所以「把 ws 转成
+//   - /api/client-ws 上没有视频，只有文本、表情下标与 base64 WAV。所以「把 ws 转成
 //     推流格式」最多得到音频轨与字幕，人物画面必须有人渲染。
 //   - 本机是 Wayland 会话，ffmpeg 的 x11grab 抓不到原生窗口（实测抓出来近全黑），
 //     而 ffmpeg 不支持 xdg-desktop-portal 那套 Wayland 抓屏。

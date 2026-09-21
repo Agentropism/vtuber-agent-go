@@ -1,7 +1,7 @@
 # 前端接口契约
 
 后端对前端暴露的 HTTP 接口。**请求-响应走 `/api/*`（JSON）**，推送（播报下发、播放回执）仍走
-WebSocket `/api/client-ws`；两侧同源，没有 CORS。
+WebSocket `/api/client-ws`；两侧同源，没有 CORS。Live2D 页面占根路径 `/`。
 
 | 项 | 约定 |
 | --- | --- |
@@ -148,14 +148,14 @@ GET /api/status
 
 未装配的子系统对应字段直接不出现（例如没配 TTS 就没有 `broadcast`），而不是回 0 让人误以为可用。
 
-## 5. 迁移状态
+## 5. 路径迁移（已完成）
 
-| 旧路径 | 新路径 | 状态 |
+| 旧路径 | 现在 | 说明 |
 | --- | --- | --- |
-| `POST /inject` | `POST /api/speak` | 过渡期两者并存，路径切换提交里下线旧路径 |
-| `/web/` | `/` | 待切换 |
-| `/client-ws` | `/api/client-ws` | 待切换 |
-| `/live2d-models/` | `/api/models/` | 待切换 |
-| `/login/*` | 不变 | 保持（仅回环可访问） |
+| `POST /inject` | `POST /api/speak` | 旧路径已下线 |
+| `/web/` | `/` | 页面占根；`[[clients]].path` 也是 `/` 时按是否 WebSocket 升级分流 |
+| `/client-ws` | `/api/client-ws` | |
+| `/live2d-models/` | `/api/models/` | `/api/models/info` 返回模型清单 |
+| `/login/*` | 不变 | 仅回环可访问 |
 
-接入客户端的上报路径（`[[clients]].path`）是配置项，不在改名范围内。
+接入客户端的上报路径（`[[clients]].path`）是配置项，不受影响；把它配成 `/` 也仍然可用。

@@ -14,6 +14,10 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/core/shared/emotion"
 )
 
+// modelsPrefix 是模型资源的挂载前缀。挂载点是网关自己的事——外部 model_dict.json
+// 里的 URL 带着它自己的前缀（原项目是 /live2d-models/），读进来必须换成这个值。
+const modelsPrefix = "/api/models"
+
 // modelEntry 是模型清单里的一项，字段对齐原项目根的 model_dict.json。
 type modelEntry struct {
 	Name       string            `json:"name"`
@@ -114,7 +118,27 @@ func readModelDict(dictPath string) ([]modelEntry, error) {
 		return nil, err
 	}
 
+	for i := range entries {
+		entries[i].URL = normalizeModelURL(entries[i].URL)
+	}
+
 	return entries, nil
+}
+
+// normalizeModelURL 把清单里的模型地址换成当前的挂载前缀。
+//
+// model_dict.json 是外部文件（原项目根目录那份），里面的 URL 自带 /live2d-models/ 前缀；
+// 直接照搬会让页面去请求一个本服务没有的路径（404），模型加载失败。
+func normalizeModelURL(raw string) string {
+	relative := strings.TrimPrefix(raw, "/")
+	if index := strings.Index(relative, "/"); index >= 0 {
+		relative = relative[index+1:] // 去掉外来的挂载前缀，保留 <模型名>/runtime/<文件>
+	}
+	if relative == "" {
+		return raw
+	}
+
+	return path.Join(modelsPrefix, relative)
 }
 
 // pickModel 选出目标模型；want 为空或找不到时取第一个。
@@ -153,7 +177,7 @@ func scanModels(modelsDir string) ([]modelEntry, error) {
 
 		entries = append(entries, modelEntry{
 			Name:       name,
-			URL:        path.Join("/live2d-models", name, "runtime", filepath.Base(match)),
+			URL:        path.Join(modelsPrefix, name, "runtime", filepath.Base(match)),
 			Scale:      0.5,
 			IdleMotion: "Idle",
 		})
@@ -165,7 +189,7 @@ func scanModels(modelsDir string) ([]modelEntry, error) {
 
 // loadExpressionNames 从 model3.json 里读出表达式名，供前端按名字切换表情。
 func loadExpressionNames(modelsDir, url string) []string {
-	relative := strings.TrimPrefix(url, "/live2d-models/")
+	relative := strings.TrimPrefix(url, modelsPrefix+"/")
 	raw, err := os.ReadFile(filepath.Join(modelsDir, filepath.FromSlash(relative)))
 	if err != nil {
 		logger.Debugf("读取模型文件失败，跳过表达式清单: %v", err)

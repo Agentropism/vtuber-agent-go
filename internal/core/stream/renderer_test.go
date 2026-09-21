@@ -55,7 +55,7 @@ func TestNewRendererRejectsBadConfig(t *testing.T) {
 
 // Chrome 必须免点击就能出声，否则无人值守推流只能推静音画面。
 func TestChromeArgsForUnattendedRun(t *testing.T) {
-	renderer, err := NewRenderer(RendererConfig{URL: "http://127.0.0.1:6199/web/?autostart=1", Width: 1280, Height: 720})
+	renderer, err := NewRenderer(RendererConfig{URL: "http://127.0.0.1:6199/?autostart=1", Width: 1280, Height: 720})
 	if err != nil {
 		t.Skipf("环境里没有 Xvfb/Chrome: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestChromeArgsForUnattendedRun(t *testing.T) {
 			t.Fatalf("Chrome 参数里缺少 %q：\n%s", want, args)
 		}
 	}
-	if !strings.HasSuffix(args, "http://127.0.0.1:6199/web/?autostart=1") {
+	if !strings.HasSuffix(args, "http://127.0.0.1:6199/?autostart=1") {
 		t.Fatalf("页面地址必须是最后一个参数：\n%s", args)
 	}
 }

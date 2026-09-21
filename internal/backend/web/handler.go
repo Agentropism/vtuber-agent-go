@@ -104,7 +104,7 @@ func (f *Frontend) Emotions() *emotion.Map {
 	return f.emotions
 }
 
-// ClientWSHandler 处理 /client-ws：浏览器接入、收下行播报、回播报回执。
+// ClientWSHandler 处理 /api/client-ws：浏览器接入、收下行播报、回播报回执。
 func (f *Frontend) ClientWSHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
@@ -128,12 +128,12 @@ func (f *Frontend) ClientWSHandler() http.Handler {
 	})
 }
 
-// ModelsHandler 处理 /live2d-models/：/info 返回清单，其余按静态文件返回。
+// ModelsHandler 处理 /api/models/：/info 返回清单，其余按静态文件返回。
 func (f *Frontend) ModelsHandler() http.Handler {
-	fileServer := http.StripPrefix("/live2d-models/", http.FileServer(http.Dir(f.cfg.ModelsDir)))
+	fileServer := http.StripPrefix(modelsPrefix+"/", http.FileServer(http.Dir(f.cfg.ModelsDir)))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.TrimSuffix(r.URL.Path, "/") == "/live2d-models/info" {
+		if strings.TrimSuffix(r.URL.Path, "/") == modelsPrefix+"/info" {
 			f.writeModelInfo(w)
 			return
 		}
@@ -154,7 +154,7 @@ func (f *Frontend) WebHandler() http.Handler {
 		})
 	}
 
-	return http.StripPrefix("/web/", http.FileServer(http.FS(sub)))
+	return http.StripPrefix("/", http.FileServer(http.FS(sub)))
 }
 
 // FaviconHandler 回应浏览器自动请求的 /favicon.ico。
@@ -224,7 +224,7 @@ type modelInfoCharacter struct {
 	ModelPath string `json:"model_path"`
 }
 
-// modelInfoResponse 是 /live2d-models/info 的响应体。
+// modelInfoResponse 是 /api/models/info 的响应体。
 type modelInfoResponse struct {
 	Type       string               `json:"type"`
 	Count      int                  `json:"count"`

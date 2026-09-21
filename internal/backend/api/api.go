@@ -39,8 +39,7 @@ type Handler struct {
 
 // Routes 返回挂在网关 mux 上的接口路由。
 //
-// 路径用 Go 1.22 的方法前缀与通配符写法，方法与子路径交给 mux 分派；
-// 旧路径 /inject 在路径切换（第三步）之前保持可达，指向同一个处理函数。
+// 路径用 Go 1.22 的方法前缀与通配符写法，方法与子路径交给 mux 分派。
 func (h *Handler) Routes() []server.Route {
 	return []server.Route{
 		{Pattern: "GET /api/config", Handler: http.HandlerFunc(h.handleConfig)},
@@ -49,7 +48,6 @@ func (h *Handler) Routes() []server.Route {
 		{Pattern: "GET /api/sessions/{id}/history", Handler: http.HandlerFunc(h.handleHistory)},
 		{Pattern: "POST /api/sessions/{id}/messages", Handler: http.HandlerFunc(h.handleSendMessage)},
 		{Pattern: "GET /api/status", Handler: http.HandlerFunc(h.handleStatus)},
-		{Pattern: "/inject", Handler: http.HandlerFunc(h.handleSpeak)},
 	}
 }
 

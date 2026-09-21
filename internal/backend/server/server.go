@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,32 +47,57 @@ type Route struct {
 
 func ProvideServer(cfg *config.Config, extra ...Route) *http.Server {
 	mux := http.NewServeMux()
-	patterns := make(map[string]string, len(cfg.Clients))
+
+	// 先收集、再注册：根路径可能同时被接入客户端（[[clients]].path = "/"）与前端页面占用，
+	// 而 ServeMux 对同一个 pattern 只允许注册一次（重复注册直接 panic）。冲突必须在注册前解决。
+	platforms := make(map[string]string, len(cfg.Clients)) // pattern → 平台名
+	order := make([]string, 0, len(cfg.Clients))
 
 	for _, client := range cfg.Clients {
-		platform := client.Platform
-		if previous, ok := patterns[client.Path]; ok {
-			logger.Errorf("接入路径 %s 被平台 %s 与 %s 重复占用，跳过后者", client.Path, previous, platform)
+		if previous, ok := platforms[client.Path]; ok {
+			logger.Errorf("接入路径 %s 被平台 %s 与 %s 重复占用，跳过后者", client.Path, previous, client.Platform)
 			continue
 		}
-		patterns[client.Path] = platform
-		mux.HandleFunc(client.Path, func(w http.ResponseWriter, r *http.Request) {
+		platforms[client.Path] = client.Platform
+		order = append(order, client.Path)
+	}
+
+	// 接口层与页面都是 extra 路由（由 app 从 api 包与 web 包挂上来）。
+	// 客户端路径可以配成 "/" 兜住所有路径，但 ServeMux 按最长前缀匹配，
+	// /api/* 与 /favicon.ico 这类更具体的 pattern 仍会落到自己的处理函数上。
+	var mergedRoot http.Handler // 非 nil：根路径上页面与接入端共存，按是否升级分流
+	pending := make([]Route, 0, len(extra))
+
+	for _, route := range extra {
+		platform, conflict := platforms[route.Pattern]
+		if !conflict {
+			pending = append(pending, route)
+			continue
+		}
+		if route.Pattern == rootPath {
+			// 页面要挂在 "/"、适配端也把 path 配成 "/"：合成一个分流处理函数，
+			// 而不是把页面丢掉（升级请求走接入端，其余走页面）。
+			mergedRoot = dispatchRoot(platform, route.Handler)
+			continue
+		}
+
+		logger.Errorf("路由 %s 与 %s 冲突，跳过该额外路由", route.Pattern, platform)
+	}
+
+	// 接入路径
+	for _, pattern := range order {
+		platform := platforms[pattern]
+		if pattern == rootPath && mergedRoot != nil {
+			mux.Handle(pattern, mergedRoot)
+			continue
+		}
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			wsHandler(w, r, platform)
 		})
 	}
 
-	// 注入接口 /inject 与 /api/* 都是 extra 路由（由 app 从 api 包挂上来）。
-	// 客户端路径可以配成 "/" 兜住所有路径，但 ServeMux 按最长前缀匹配，
-	// 这些更具体的 pattern 仍会落到自己的处理函数上。
-
-	// 额外路由：与接入路径冲突时跳过并报错，而不是让 http.ServeMux panic
-	// （重复注册同一个 pattern 会直接 panic，把整个进程带走）。
-	for _, route := range extra {
-		if previous, ok := patterns[route.Pattern]; ok {
-			logger.Errorf("路由 %s 与 %s 冲突，跳过该额外路由", route.Pattern, previous)
-			continue
-		}
-		patterns[route.Pattern] = "额外路由"
+	// 额外路由：与接入路径冲突的已在上一步剔除
+	for _, route := range pending {
 		mux.Handle(route.Pattern, route.Handler)
 	}
 
@@ -80,6 +106,23 @@ func ProvideServer(cfg *config.Config, extra ...Route) *http.Server {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+}
+
+// rootPath 是根路径：前端页面与接入客户端都可能占它。
+const rootPath = "/"
+
+// dispatchRoot 合成根路径的处理函数：WebSocket 升级走接入端，其余请求走额外路由（前端页面）。
+//
+// 判据是 Upgrade 头，不需要真的握手——非升级请求交给页面，浏览器才打得开首页。
+func dispatchRoot(platform string, extra http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(strings.ToLower(r.Header.Get("Upgrade")), "websocket") {
+			wsHandler(w, r, platform)
+			return
+		}
+
+		extra.ServeHTTP(w, r)
+	})
 }
 
 func wsHandler(w http.ResponseWriter, r *http.Request, platform string) {

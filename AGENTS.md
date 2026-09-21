@@ -30,7 +30,7 @@ internal/backend/     传输与接入:HTTP/WS 服务端、前端资源托管、�
   app/                装配:config → logger → 注入 → 注册 handler → 路由
   api/                对前端的 REST 接口:配置只读、播报注入、会话读写、运行状态(契约见 docs/API.md)
   server/             WS 接入与 Action 写回(平台侧连接管理)
-  web/                /client-ws 协议、Live2D 页面与模型托管、播报 Sink;页面资源 embed 自顶层 frontend/
+  web/                /api/client-ws 协议、Live2D 页面(占根路径)与 /api/models/ 托管、播报 Sink;页面资源 embed 自顶层 frontend/
 frontend/             前端工程源码(页面 + libs);go generate 同步到 internal/backend/web/assets/(产物 gitignore)
 characters/ scripts/ config.toml.example   非 Go 资产,与 Go 包同层
 ```
@@ -117,7 +117,7 @@ POST /api/speak ─────────────────────�
 | 路径 | 内容 |
 | --- | --- |
 | `GET /api/config` | 配置只读；结构与 `config.toml` 同构，`api_key`/`cookie` 只回 `{"configured": bool}` |
-| `POST /api/speak` | 播报注入（旧路径 `POST /inject` 在过渡期仍可达，指向同一个处理函数） |
+| `POST /api/speak` | 播报注入（旧路径 `POST /inject` 已下线） |
 | `GET /api/sessions` | 会话列表：渠道、待处理数、历史条数、最近活跃与最近主动发言时间 |
 | `GET /api/sessions/{id}/history` | 该渠道的历史消息（只回 user/assistant，不回系统提示词） |
 | `POST /api/sessions/{id}/messages` | 以观众身份发消息：走 `upload` 管线，等同平台事件，会落记忆 |
@@ -132,11 +132,12 @@ POST /api/speak ─────────────────────�
 
 | 路径 | 内容 |
 | --- | --- |
-| `/web/` | 内置的极简 Live2D 页面（`go:embed`，随二进制分发） |
-| `/client-ws` | 浏览器长连接：下发 `hello`/`speak`，回收 `playback-started`/`playback-finished` |
-| `/live2d-models/` | 模型静态资源；`/live2d-models/info` 返回模型清单 |
+| `/` | 内置的极简 Live2D 页面（`go:embed`，随二进制分发） |
+| `/api/client-ws` | 浏览器长连接：下发 `hello`/`speak`，回收 `playback-started`/`playback-finished` |
+| `/api/models/` | 模型静态资源；`/api/models/info` 返回模型清单 |
+| `/favicon.ico` | 直接回 204：否则会被兜底的根路径路由当成非法升级请求（426）刷控制台 |
 
-- 页面挂在 `/web/` 而不是 `/`：接入客户端可以占用根路径（`[[clients]].path`），两者不该抢路由；`server.ProvideServer` 对重复 pattern 会跳过并报错，不会 panic。
+- 页面占根路径，接入客户端也常把 `[[clients]].path` 配成 `/`：`server.ProvideServer` 先收集再注册，遇到这种冲突合成一个处理函数（`dispatchRoot`）——**WebSocket 升级请求走接入端，其余请求走页面**；其余重复 pattern 跳过并报错，不会 panic。
 - 表情：模型清单的 `emotionMap` 决定词表，对话侧把回复里的 `[joy]` 标签摘进 `broadcast.Item.Emotion`，前端换成 Live2D 表达式下标；词表定义在 `internal/core/shared/emotion`。
 - 音频契约：TTS 输出裸 PCM16 24kHz 单声道，由 `internal/backend/web` 补 44 字节 WAV 头再 base64——浏览器不吃裸 PCM。
 
@@ -145,7 +146,7 @@ POST /api/speak ─────────────────────�
 配了 `[stream].enabled` 后由 `app.Run` 起停，链路是：
 
 ```text
-开播取地址(B站 web 接口) → Xvfb 虚拟屏 → Chrome 全屏跑 /web/?autostart=1（画面来源）
+开播取地址(B站 web 接口) → Xvfb 虚拟屏 → Chrome 全屏跑 /?autostart=1（画面来源）
 播报队列的 PCM ──────────────→ 命名管道 ──┐
 屏幕画面 ────────────────────→ x11grab ──┴→ ffmpeg → flv → RTMP
 ```

@@ -172,11 +172,16 @@ if [ "$bad_code" != "400" ]; then
     exit 1
 fi
 
-# 路径切换（第三步）之前，旧路径必须仍然可达
+# 路径已切换：旧路径必须下线（注入改走 /api/speak，页面改占根路径）
 legacy_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "$API/inject" \
-    -H 'Content-Type: application/json' -d '{"text":"旧路径冒烟"}')"
-if [ "$legacy_code" != "200" ]; then
-    echo "旧路径 /inject 状态码 = $legacy_code, want 200" >&2
+    -H 'Content-Type: application/json' -d '{"text":"旧路径应已下线"}')"
+if [ "$legacy_code" = "200" ]; then
+    echo "旧路径 /inject 仍在响应，路径切换没做完" >&2
+    exit 1
+fi
+page_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$API/")"
+if [ "$page_code" != "200" ]; then
+    echo "首页状态码 = $page_code, want 200（页面没有占住根路径）" >&2
     exit 1
 fi
 
@@ -209,13 +214,13 @@ if ! grep -q "工具 memory_search 执行完成" "$WORK_DIR/gateway.log"; then
     exit 1
 fi
 if ! grep -q "播报注入已入队" "$WORK_DIR/gateway.log"; then
-    echo "/inject 与 /api/speak 都没有生效" >&2
+    echo "播报注入没有生效" >&2
     exit 1
 fi
 if ! grep -q "接口注入冒烟" "$WORK_DIR/gateway.log"; then
     echo "/api/speak 没有入队" >&2
     exit 1
-    echo "/inject 没有生效" >&2
+    echo "播报注入没有生效" >&2
     exit 1
 fi
 if ! grep -q "主动发言已入队" "$WORK_DIR/gateway.log"; then
@@ -244,7 +249,7 @@ if ! grep -q "vtuber-agent-go 已退出" "$WORK_DIR/gateway.log"; then
     exit 1
 fi
 # 端口要真的释放掉，不能只是进程没了
-if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$GW_PORT/inject" 2>/dev/null; then
+if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$GW_PORT/api/status" 2>/dev/null; then
     echo "网关退出后端口 $GW_PORT 仍在响应" >&2
     exit 1
 fi

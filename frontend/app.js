@@ -131,7 +131,7 @@ function showCaption(speaker, text) {
     captionEl.classList.remove('on');
     return;
   }
-  speakerEl.textContent = speaker ? speaker + '：' : '';
+  speakerEl.textContent = speaker ? `${speaker}：` : '';
   textEl.textContent = text;
   captionEl.classList.add('on');
 }
@@ -250,22 +250,23 @@ function send(type, data) {
 
 function handleMessage(msg) {
   switch (msg.type) {
-    case 'hello':
+    case 'hello': {
       const character = (msg.data && msg.data.character) || {};
       speakerEl.dataset.name = character.name || '';
       if (character.name) {
         gateTitleEl.textContent = character.name;
-        document.title = character.name + ' · SyAgent';
+        document.title = `${character.name} · SyAgent`;
       }
       loadModel(msg.data && msg.data.model)
-        .then(() => setStatus('已连接 · ' + (character.name || ''), 'ok'))
+        .then(() => setStatus(`已连接 · ${character.name || ''}`, 'ok'))
         .catch((err) => {
           console.error(err);
-          setStatus('模型加载失败：' + err.message, 'err');
+          setStatus(`模型加载失败：${err.message}`, 'err');
         });
       break;
+    }
 
-    case 'speak':
+    case 'speak': {
       const data = msg.data || {};
       playChain = playChain
         .then(() => {
@@ -275,6 +276,7 @@ function handleMessage(msg) {
         })
         .catch((err) => console.error('播报失败', err));
       break;
+    }
 
     default:
       console.debug('忽略消息', msg);
@@ -283,7 +285,7 @@ function handleMessage(msg) {
 
 function connect() {
   const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  socket = new WebSocket(scheme + '://' + location.host + '/client-ws');
+  socket = new WebSocket(`${scheme}://${location.host}/api/client-ws`);
 
   socket.onopen = () => {
     reconnectDelay = RECONNECT_MIN;
@@ -302,7 +304,7 @@ function connect() {
   };
 
   socket.onclose = () => {
-    setStatus('连接已断开，' + Math.round(reconnectDelay / 1000) + ' 秒后重连…', 'err');
+    setStatus(`连接已断开，${Math.round(reconnectDelay / 1000)} 秒后重连…`, 'err');
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX);
   };
@@ -334,5 +336,5 @@ async function main() {
 
 main().catch((err) => {
   console.error(err);
-  setStatus('初始化失败：' + err.message, 'err');
+  setStatus(`初始化失败：${err.message}`, 'err');
 });

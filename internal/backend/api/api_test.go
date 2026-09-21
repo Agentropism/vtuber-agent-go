@@ -78,7 +78,7 @@ func TestSpeakRejections(t *testing.T) {
 	}
 }
 
-// 接入客户端路径可以配成 "/" 兜住所有路径，/api/* 与 /inject 必须仍然落到接口层，
+// 接入客户端路径可以配成 "/" 兜住所有路径，/api/* 必须仍然落到接口层，
 // 否则请求会被当成 WebSocket 握手（405/426）而不是拿到 JSON 响应。
 func TestRoutesTakePrecedenceOverCatchAllClientPath(t *testing.T) {
 	cfg := &config.Config{}
@@ -93,17 +93,21 @@ func TestRoutesTakePrecedenceOverCatchAllClientPath(t *testing.T) {
 
 	srv := server.ProvideServer(cfg, handler.Routes()...)
 
-	for _, path := range []string{"/api/speak", "/inject"} {
-		recorder := httptest.NewRecorder()
-		srv.Handler.ServeHTTP(recorder, newRequest(http.MethodPost, path, `{"text":"你好"}`))
+	recorder := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(recorder, newRequest(http.MethodPost, "/api/speak", `{"text":"你好"}`))
 
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("%s 状态码 = %d, want 200（被接入客户端的兜底路径吃掉了）", path, recorder.Code)
-		}
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("/api/speak 状态码 = %d, want 200（被接入客户端的兜底路径吃掉了）", recorder.Code)
+	}
+	if called != 1 {
+		t.Fatalf("播报入队次数 = %d, want 1", called)
 	}
 
-	if called != 2 {
-		t.Fatalf("播报入队次数 = %d, want 2", called)
+	// 旧路径已下线：请求会落到兜底的接入端处理上，而不是接口层
+	legacy := httptest.NewRecorder()
+	srv.Handler.ServeHTTP(legacy, newRequest(http.MethodPost, "/inject", `{"text":"你好"}`))
+	if legacy.Code == http.StatusOK {
+		t.Fatal("/inject 仍在响应，路径切换没做完")
 	}
 }
 

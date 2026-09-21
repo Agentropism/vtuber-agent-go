@@ -108,7 +108,7 @@ func TestScanModels(t *testing.T) {
 	if entries[0].Name != "mao_pro" {
 		t.Fatalf("第一个模型 = %s（应按名字排序）", entries[0].Name)
 	}
-	if entries[0].URL != "/live2d-models/mao_pro/runtime/mao_pro.model3.json" {
+	if entries[0].URL != "/api/models/mao_pro/runtime/mao_pro.model3.json" {
 		t.Fatalf("模型地址 = %s", entries[0].URL)
 	}
 }
@@ -139,7 +139,7 @@ func TestSinkDeliversAndWaitsForPlayback(t *testing.T) {
 
 	conn, _, err := websocket.Dial(context.Background(), "ws"+strings.TrimPrefix(server.URL, "http"), nil)
 	if err != nil {
-		t.Fatalf("连接 /client-ws: %v", err)
+		t.Fatalf("连接 /api/client-ws: %v", err)
 	}
 	defer conn.CloseNow()
 
@@ -257,7 +257,7 @@ func TestModelInfoEndpoint(t *testing.T) {
 	}
 
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/live2d-models/info", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/models/info", nil)
 	front.ModelsHandler().ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
@@ -270,7 +270,7 @@ func TestModelInfoEndpoint(t *testing.T) {
 	if response.Count != 1 || len(response.Characters) != 1 {
 		t.Fatalf("清单内容不对: %s", recorder.Body.String())
 	}
-	if response.Characters[0].ModelPath != "/live2d-models/mao_pro/runtime/mao_pro.model3.json" {
+	if response.Characters[0].ModelPath != "/api/models/mao_pro/runtime/mao_pro.model3.json" {
 		t.Fatalf("模型路径 = %s", response.Characters[0].ModelPath)
 	}
 }
@@ -295,15 +295,15 @@ func TestWebHandlerServesPage(t *testing.T) {
 		t.Fatalf("构造前端: %v", err)
 	}
 
-	// "/web/" 由 FileServer 直接给 index.html（显式请求 /index.html 会被它跳到 ./）
+	// 页面挂在根路径后由 FileServer 直接给 index.html（显式请求 /index.html 会被它跳到 ./）
 	cases := []struct {
 		requestPath string
 		contains    string
 	}{
-		{"/web/", "<canvas"},
-		{"/web/app.js", "client-ws"},
-		{"/web/libs/pixi.min.js", "pixi.js"},
-		{"/web/libs/live2dcubismcore.min.js", "Live2D"},
+		{"/", "<canvas"},
+		{"/app.js", "client-ws"},
+		{"/libs/pixi.min.js", "pixi.js"},
+		{"/libs/live2dcubismcore.min.js", "Live2D"},
 	}
 	for _, tc := range cases {
 		recorder := httptest.NewRecorder()
@@ -314,5 +314,29 @@ func TestWebHandlerServesPage(t *testing.T) {
 		if !strings.Contains(recorder.Body.String(), tc.contains) {
 			t.Fatalf("%s 内容里没有 %q（嵌入资源可能漏了）", tc.requestPath, tc.contains)
 		}
+	}
+}
+
+// model_dict.json 是外部文件，里面的 URL 带着原项目的挂载前缀（/live2d-models/）。
+// 直接把它的 URL 透出去，页面就会去请求本服务没有的路径、模型加载失败（e2e 抓到过）。
+func TestReadModelDictNormalizesURLPrefix(t *testing.T) {
+	dir := t.TempDir()
+	dictPath := filepath.Join(dir, "model_dict.json")
+	content := `[{"name":"mao_pro","url":"/live2d-models/mao_pro/runtime/mao_pro.model3.json"}]`
+	if err := os.WriteFile(dictPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("写清单: %v", err)
+	}
+
+	entries, err := readModelDict(dictPath)
+	if err != nil {
+		t.Fatalf("读清单: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("条目数 = %d, want 1", len(entries))
+	}
+
+	want := modelsPrefix + "/mao_pro/runtime/mao_pro.model3.json"
+	if entries[0].URL != want {
+		t.Fatalf("URL = %q, want %q", entries[0].URL, want)
 	}
 }

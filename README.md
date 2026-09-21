@@ -17,7 +17,7 @@ go generate ./...                  # 同步 frontend/ 的前端资源进 embed �
 go build ./cmd/vtuber-agent-go/   # 编译
 cp config.toml.example config.toml # 配置（含凭据，不进版本控制）
 ./vtuber-agent-go                 # 运行；config.toml 与 characters/ 需在当前目录
-xdg-open http://127.0.0.1:6199/web/
+xdg-open http://127.0.0.1:6199/
 ```
 
 验证：
@@ -58,4 +58,4 @@ docs/                  契约文档；docs/archive/ 为归档文档；docs/agent
 - 纯 Go、无 CGo，产物是单个二进制；前端页面源码在顶层 `frontend/`，经 `go generate` 同步后用 `go:embed` 内嵌。
 - 凭据只走环境变量或 `config.toml`（已 gitignore），不进仓库。
 - B 站事件由**外部上报端**经 `/bilibili` 上报：网关不含 B 站协议实现（连接、鉴权、重连、凭据都在上报端）。接入要求与已知坑见 [`docs/BILIBILI_INGEST.md`](docs/BILIBILI_INGEST.md)。
-- 推流（可选）：配 `[stream]` 后由本进程起 Xvfb + Chrome 渲染 `/web/` 画面，ffmpeg 抓屏混音推 RTMP；地址可自动开播获取，也可手填 `output`。登录态用浏览器打开 `http://127.0.0.1:<端口>/login/` 扫码即可（页面仅本机可访问）。
+- 推流（可选）：配 `[stream]` 后由本进程起 Xvfb + Chrome 渲染首页画面，ffmpeg 抓屏混音推 RTMP；地址可自动开播获取，也可手填 `output`。登录态用浏览器打开 `http://127.0.0.1:<端口>/login/` 扫码即可（页面仅本机可访问）。

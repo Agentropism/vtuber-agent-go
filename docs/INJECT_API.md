@@ -2,8 +2,8 @@
 
 ## 1. 概述
 
-> **端点已改名**：`POST /inject` → `POST /api/speak`（过渡期两者并存，路径切换提交里下线旧路径）。
-> 接口总览见 [`docs/API.md`](API.md)，本文只讲播报注入的行为细节。
+> **端点为 `POST /api/speak`**（旧路径 `/inject` 已下线）。接口总览见 [`docs/API.md`](API.md)，
+> 本文只讲播报注入的行为细节。
 
 `POST /api/speak` 让外部程序把一段文本交给网关的统一播报队列：网关负责合成语音并按时序投递，前端负责出声、口型与表情。
 
@@ -59,4 +59,4 @@ curl -X POST localhost:6199/api/speak \
 
 ## 5. 表情的落地路径
 
-`emotion` 随播报条目（`broadcast.Item.Emotion`）流经队列，由 `Sink` 在投递时按当前模型的 `emotionMap` 换算成 Live2D 表达式下标，经 `/client-ws` 的 `speak` 消息带给浏览器（见 `internal/backend/web`）。未配置 `[frontend]` 时退回只记日志的占位实现，表情不生效。
+`emotion` 随播报条目（`broadcast.Item.Emotion`）流经队列，由 `Sink` 在投递时按当前模型的 `emotionMap` 换算成 Live2D 表达式下标，经 `/api/client-ws` 的 `speak` 消息带给浏览器（见 `internal/backend/web`）。未配置 `[frontend]` 时退回只记日志的占位实现，表情不生效。

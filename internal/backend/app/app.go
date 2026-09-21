@@ -51,7 +51,7 @@ func Initialize() (*App, error) {
 		logger.Infof("已加载角色: %s（Live2D 模型 %s）", character.Name, character.Live2DModel)
 	}
 
-	// 前端接入：浏览器页面 + /client-ws + 模型静态资源；未配置时为 nil
+	// 前端接入：浏览器页面（根路径）+ /api/client-ws + /api/models/ 模型资源；未配置时为 nil
 	front, err := provideFrontend(cfg, character)
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func Initialize() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	// 播报注入（/api/speak，过渡期还含旧路径 /inject）与事件回复共用这一条队列；
+	// 播报注入（/api/speak）与事件回复共用这一条队列；
 	// 未装配播报时 speak 为 nil，接口返回 503。装配成路由见下方的 apiHandler。
 	var speak func(text, emotion string) error
 	if queue != nil {
@@ -133,8 +133,9 @@ func Initialize() (*App, error) {
 
 // frontendRoutes 把前端接入挂到网关 mux 上。
 //
-// 页面挂在 /web/ 而不是 /：接入客户端可以占用根路径（[[clients]].path），
-// 两者的路由不该互相打架。
+// 页面挂在根路径 /，模型资源在 /api/models/，浏览器长连接在 /api/client-ws。
+// 接入客户端仍可把 [[clients]].path 配成 "/"：ProvideServer 遇到这种冲突会把
+// 根路径合成一个「WS 升级走接入端、其余走页面」的处理函数（见 server.mergeRootRoute）。
 func frontendRoutes(front *web.Frontend) []server.Route {
 	if front == nil {
 		return nil
@@ -142,9 +143,9 @@ func frontendRoutes(front *web.Frontend) []server.Route {
 
 	return []server.Route{
 		{Pattern: "/favicon.ico", Handler: front.FaviconHandler()},
-		{Pattern: "/client-ws", Handler: front.ClientWSHandler()},
-		{Pattern: "/live2d-models/", Handler: front.ModelsHandler()},
-		{Pattern: "/web/", Handler: front.WebHandler()},
+		{Pattern: "/api/client-ws", Handler: front.ClientWSHandler()},
+		{Pattern: "/api/models/", Handler: front.ModelsHandler()},
+		{Pattern: "/", Handler: front.WebHandler()},
 	}
 }
 

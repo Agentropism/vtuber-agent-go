@@ -45,7 +45,7 @@ type RendererConfig struct {
 	// Xvfb 与 Chrome 是可执行文件名，默认 "Xvfb" 与 "google-chrome-stable"。
 	Xvfb   string
 	Chrome string
-	// URL 是页面地址，必填，形如 http://127.0.0.1:6199/web/?autostart=1。
+	// URL 是页面地址，必填，形如 http://127.0.0.1:6199/?autostart=1。
 	URL string
 	// Width / Height 是虚拟屏尺寸，需与推流尺寸一致，否则画面会缩放。
 	Width  int
@@ -56,7 +56,7 @@ type RendererConfig struct {
 
 // Renderer 起一块虚拟 X 屏并在上面全屏跑前端页面。
 //
-// 画面必须有人渲染：/client-ws 上只有文本、表情与音频，没有视频。这里用
+// 画面必须有人渲染：/api/client-ws 上只有文本、表情与音频，没有视频。这里用
 // Xvfb + Chrome 当渲染器，ffmpeg 再从这块屏上抓画面（见包注释）。
 //
 // 已经有一块同号的显示存在时不会重复起 Xvfb，也不会在 Stop 时把别人的屏关掉。

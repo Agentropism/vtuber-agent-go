@@ -144,11 +144,11 @@ func provideStream(cfg *config.Config) (*streamRuntime, error) {
 	return runtime, nil
 }
 
-// webPageURL 拼出让 Chrome 打开的页面地址：":8080" → http://127.0.0.1:8080/web/?autostart=1
+// webPageURL 拼出让 Chrome 打开的页面地址：":8080" → http://127.0.0.1:8080/?autostart=1
 //
 // autostart=1 是给无人值守用的：虚拟屏上没有人能点「点击开始」。
 func webPageURL(addr string) string {
-	return hostURL(addr) + "/web/?autostart=1"
+	return hostURL(addr) + "/?autostart=1"
 }
 
 // loginURL 是扫码登录页地址。
@@ -415,7 +415,7 @@ const silenceChunkMillis = 100
 // 一次写超出管道缓冲的部分会被直接丢掉（听感上就是缺字）。分块 + 按时长等待
 // 同时让播报队列的抢占与冷却保持真实时序。
 //
-// 注意它不替代前端 Sink：Chrome 里那个页面仍然要靠 /client-ws 的 speak 驱动
+// 注意它不替代前端 Sink：Chrome 里那个页面仍然要靠 /api/client-ws 的 speak 驱动
 // 口型与字幕，所以两者是并行投递（见 fanOutSink）。
 type streamSink struct {
 	runtime *streamRuntime

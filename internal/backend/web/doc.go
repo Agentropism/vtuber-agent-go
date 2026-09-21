@@ -1,4 +1,4 @@
-// Package web 提供前端接入（执行计划 E6）：/client-ws 下行协议、模型清单接口，
+// Package web 提供前端接入（执行计划 E6）：/api/client-ws 下行协议、模型清单接口，
 // 以及把播报队列合成好的音频送到浏览器播放。
 //
 // 本包是 broadcast.Sink 的实现：队列把 Item 与裸 PCM 交给 Play，这里负责

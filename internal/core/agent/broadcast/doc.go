@@ -13,7 +13,7 @@
 //   - MinInterval 是两次播报之间的冷却间隔。
 //   - 队列满(MaxPending)时淘汰优先级最低的待合成条目;新条目本身最低则丢弃新条目。
 //
-// `/inject` 播报与会话回复都调用 Enqueue,由此消灭双播报管线。
+// `/api/speak` 播报与会话回复都调用 Enqueue,由此消灭双播报管线。
 // 合成由 Synthesizer(通常传 tts.Chain)完成,投递由 Sink 交到前端协议层。
 // 条目里的 Emotion 由 Sink 带给前端做表情,队列本身不解释它。
 package broadcast

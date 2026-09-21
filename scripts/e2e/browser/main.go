@@ -1,4 +1,4 @@
-// 浏览器端检查：用无头 Chromium 打开 /web/，确认页面真的能跑起来。
+// 浏览器端检查：用无头 Chromium 打开首页，确认页面真的能跑起来。
 //
 // 这一步验证的是 JS 侧——模型加载、字幕、点击遮罩、控制台无报错。没有它的话，
 // app.js 改坏了只有人工打开浏览器才会发现。
@@ -45,7 +45,7 @@ const { chromium } = require(process.env.PW_MODULE);
   page.on('pageerror', (e) => errors.push('页面异常: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('控制台错误: ' + m.text()); });
 
-  await page.goto('http://' + addr + '/web/', { waitUntil: 'load' });
+  await page.goto('http://' + addr + '/', { waitUntil: 'load' });
 
   // 点击遮罩之前不该连服务端：没有交互时浏览器会拒绝出声
   const gated = await page.evaluate(() => !document.getElementById('gate').classList.contains('off'));
@@ -53,10 +53,16 @@ const { chromium } = require(process.env.PW_MODULE);
 
   await page.click('#start');
 
-  await page.waitForFunction(
-    () => document.getElementById('status').textContent.includes('已连接 · '),
-    { timeout: 20000 },
-  ).catch(() => errors.push('20 秒内没有连上前端通道：' + document.getElementById('status').textContent));
+  // 注意：.catch 的回调跑在 Node 里，读不到 document——要回页面里再读一次状态
+  try {
+    await page.waitForFunction(
+      () => document.getElementById('status').textContent.includes('已连接 · '),
+      { timeout: 20000 },
+    );
+  } catch (err) {
+    const status = await page.evaluate(() => document.getElementById('status').textContent);
+    errors.push('20 秒内没有连上前端通道，页面状态：' + status);
+  }
 
   // 模型渲染出来才算真的可用
   const rendered = await page.evaluate(() => {
@@ -66,17 +72,22 @@ const { chromium } = require(process.env.PW_MODULE);
   if (!rendered) errors.push('模型没有渲染出来');
 
   await page.evaluate(async () => {
-    await fetch('/inject', {
+    await fetch('/api/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: '浏览器检查：你好呀', emotion: 'joy' }),
     });
   });
 
-  await page.waitForFunction(
-    () => document.getElementById('text').textContent.includes('浏览器检查'),
-    { timeout: 15000 },
-  ).catch(() => errors.push('字幕没有出现'));
+  try {
+    await page.waitForFunction(
+      () => document.getElementById('text').textContent.includes('浏览器检查'),
+      { timeout: 15000 },
+    );
+  } catch (err) {
+    const caption = await page.evaluate(() => document.getElementById('text').textContent);
+    errors.push('字幕没有出现，字幕内容：' + caption);
+  }
 
   if (process.env.SMOKE_SHOT) {
     await page.screenshot({ path: process.env.SMOKE_SHOT });

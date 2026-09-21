@@ -10,7 +10,7 @@
 | E3 会话核心 | ✅ 会话管理、Agent 循环、句子分段、历史裁剪、角色资产 |
 | E4 语音引擎 | ✅ 云 TTS 5 家 + failover，裸 PCM16 24kHz 单声道 |
 | E5 播报队列 | ✅ 优先级/抢占/冷却/并行合成、`POST /api/speak`、distillery 已删 |
-| E6 前端 | ✅ `/client-ws`、Live2D 页面、模型托管、表情与口型 |
+| E6 前端 | ✅ `/api/client-ws`、Live2D 页面（根路径）、`/api/models/` 模型托管、表情与口型 |
 | E7 记忆与工具 | ✅ JSON Lines 记忆 + 关键词召回、工具注册层、主动发言 |
 | E8 集成与切换 | 🟡 本文档 + 联调结论；真实账号联调待执行 |
 
@@ -71,7 +71,7 @@ SMOKE_MODELS_DIR=/path/to/live2d-models scripts/e2e/run.sh
 	压缩帧事件被静默丢弃、重连实际不可达、帧长越界 panic 等，若选它当上报端必须逐条验收）。
 2. **LLM**：填入 `[llm]` 的真实端点与模型，确认流式回复与（开启工具后的）工具调用。
 3. **TTS**：从 `[tts].engines` 里选一个可用引擎并填凭据；`edge_tts` 免凭据但需要外网。
-4. **前端**：浏览器打开 `http://<host>:6199/web/`，点「点击开始」，确认模型加载与出声。
+4. **前端**：浏览器打开 `http://<host>:6199/`，点「点击开始」，确认模型加载与出声。
 5. **QQ 侧**（可选）：OneBot 实现连到 `[[clients]]` 里配置的路径。
 
 ## 5. 切换步骤
@@ -89,7 +89,7 @@ go build -o vtuber-agent-go ./cmd/vtuber-agent-go/
 ./vtuber-agent-go
 
 # 3. 浏览器打开前端
-xdg-open http://127.0.0.1:6199/web/
+xdg-open http://127.0.0.1:6199/
 ```
 
 启动日志应当包含：`已加载角色`、`前端已就绪`、`长期记忆已启用`（若配置）、

@@ -138,7 +138,7 @@ type StreamConfig struct {
 	CookieFile string `toml:"cookie_file"`
 	// Input 是画面来源：screen（抓虚拟屏，默认）或 test（ffmpeg 测试画面，自检用）。
 	Input string `toml:"input"`
-	// Renderer 为真时由本进程起 Xvfb + Chrome 渲染 /web/ 页面；显示与浏览器自备时置 false。
+	// Renderer 为真时由本进程起 Xvfb + Chrome 渲染首页；显示与浏览器自备时置 false。
 	Renderer bool   `toml:"renderer"`
 	Display  string `toml:"display"`
 	Xvfb     string `toml:"xvfb"`
