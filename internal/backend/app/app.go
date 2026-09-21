@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/api"
@@ -101,16 +100,30 @@ func Initialize() (*App, error) {
 
 	// 前端接口层：配置只读、播报注入、会话读写、运行状态。
 	// 能力用 nil 表示未装配（没配 TTS 就没有播报、没配 LLM 就没有会话），接口据此返回 503。
+	// 试听要有引擎才有意义：没配 [tts].engines 时保持 nil，接口回 503 而不是 502
+	var ttsPreview func(engine, voice, text string) ([]byte, error)
+	if len(cfg.TTS.Engines) > 0 {
+		ttsPreview = provideTTSPreview(cfg)
+	}
+
 	apiHandler := &api.Handler{
-		Config:   config.ProvideConfig,
-		Speak:    speak,
-		Sessions: sessions,
-		Memory:   store,
-		Tools:    registry,
-		Queue:    queue,
-		Clients:  server.ConnectedPlatforms,
-		Upload:   upload.Stats,
-		Started:  started,
+		Config:      config.ProvideConfig,
+		Speak:       speak,
+		Sessions:    sessions,
+		Memory:      store,
+		Tools:       registry,
+		Queue:       queue,
+		Clients:     server.ConnectedPlatforms,
+		Upload:      upload.Stats,
+		Started:     started,
+		ModelState:  modelStateFunc(front),
+		ModelSwitch: modelSwitchFunc(front),
+		EmotionShow: emotionShowFunc(front),
+		TTSInfo:     provideTTSInfo(cfg),
+		TTSPreview:  ttsPreview,
+		StreamInfo:  streamInfoFunc(streaming, cfg),
+		StreamStart: streamStartFunc(streaming),
+		StreamStop:  streamStopFunc(streaming),
 	}
 
 	if err := upload.Init(upload.Options{
@@ -161,31 +174,13 @@ func (a *App) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() { errCh <- a.Server.ListenAndServe() }()
 
-	// 推流随进程存活：地址解析、虚拟屏与 ffmpeg 都在这里起，退出时一并收掉
+	// 推流随进程自动起（[stream].enabled）；退出时 Stop 会等关播收尾。
+	// 运行期也可以由 /api/stream 启停——两条路径都走 runtime 自己的 Start/Stop。
 	if a.stream != nil {
 		defer a.stream.Close()
+		defer a.stream.Stop()
 
-		var streaming sync.WaitGroup
-		streaming.Add(1)
-		go func() {
-			defer streaming.Done()
-			if err := a.stream.Run(ctx); err != nil && ctx.Err() == nil {
-				logger.Errorf("推流已停止: %v", err)
-			}
-		}()
-
-		// 退出前必须等推流协程收尾：它的 defer 里要调关播接口。进程先走就等于把
-		// 直播间挂在「直播中」（实测踩到：进程已退出，B 站侧 live_status 仍是 1、还挂着观众）。
-		defer func() {
-			done := make(chan struct{})
-			go func() { streaming.Wait(); close(done) }()
-
-			select {
-			case <-done:
-			case <-time.After(shutdownTimeout):
-				logger.Warn("等推流收尾超时，关播可能未完成")
-			}
-		}()
+		a.stream.Start(ctx)
 	}
 
 	select {
@@ -253,9 +248,9 @@ func provideSessions(
 	if queue != nil {
 		sessionsCfg.Broadcast = queue
 	}
-	// 表情词表由前端（模型清单）提供；没有前端就没有表情，标签也不做特殊处理
+	// 表情词表由前端（模型清单）提供，取的是方法值而不是快照——模型热切换后会话侧跟着换
 	if front != nil {
-		sessionsCfg.Emotions = front.Emotions()
+		sessionsCfg.Emotions = front.Emotions
 	}
 	if store != nil {
 		sessionsCfg.Memory = memoryAdapter{store: store}

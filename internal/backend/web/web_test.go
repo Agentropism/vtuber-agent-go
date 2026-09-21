@@ -27,7 +27,7 @@ func TestEncodeWAV(t *testing.T) {
 		pcm[i] = byte(i % 251)
 	}
 
-	wav := encodeWAV(pcm)
+	wav := EncodeWAV(pcm)
 
 	if len(wav) != wavHeaderSize+len(pcm) {
 		t.Fatalf("长度 = %d, want %d", len(wav), wavHeaderSize+len(pcm))

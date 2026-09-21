@@ -405,3 +405,165 @@ func TestToolEndpoints(t *testing.T) {
 		t.Fatalf("未注册工具状态码 = %d, want 404", recorder.Code)
 	}
 }
+
+// 模型接口：清单、热切换、表情预览。
+func TestModelEndpoints(t *testing.T) {
+	switched := ""
+	shown := ""
+
+	handler := &Handler{
+		ModelState: func() (ModelState, error) {
+			return ModelState{
+				Current:  ModelInfo{Name: "mao_pro", URL: "/api/models/mao_pro/runtime/mao_pro.model3.json", Scale: 0.8},
+				Models:   []ModelInfo{{Name: "mao_pro", URL: "u1"}, {Name: "hiyori", URL: "u2"}},
+				Emotions: []string{"joy", "anger"},
+			}, nil
+		},
+		ModelSwitch: func(name string) error { switched = name; return nil },
+		EmotionShow: func(label string) (int, error) {
+			if label != "joy" {
+				return -1, errors.New("表情标签不在当前模型里: " + label)
+			}
+			shown = label
+			return 3, nil
+		},
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.handleModels(recorder, newRequest(http.MethodGet, "/api/models", ""))
+	body := recorder.Body.String()
+	for _, want := range []string{"mao_pro", "hiyori", "joy", "/api/models/"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("模型清单缺少 %q: %s", want, body)
+		}
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleModelSwitch(recorder, newRequest(http.MethodPost, "/api/models/active", `{"name":"hiyori"}`))
+	if recorder.Code != http.StatusOK || switched != "hiyori" {
+		t.Fatalf("切换模型 = %d, switched=%q", recorder.Code, switched)
+	}
+
+	// 不存在的模型要回 404，而不是把内部错误抛出去
+	recorder = httptest.NewRecorder()
+	handler.handleModelSwitch(recorder, newRequest(http.MethodPost, "/api/models/active", `{"name":"nope"}`))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("未知模型状态码 = %d, want 404", recorder.Code)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleEmotionPreview(recorder, newRequest(http.MethodPost, "/api/models/emotion", `{"label":"joy"}`))
+	if recorder.Code != http.StatusOK || shown != "joy" || !strings.Contains(recorder.Body.String(), `"emotion":3`) {
+		t.Fatalf("表情预览 = %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleEmotionPreview(recorder, newRequest(http.MethodPost, "/api/models/emotion", `{"label":"nope"}`))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("未知表情状态码 = %d, want 400", recorder.Code)
+	}
+
+	// 没启用 [frontend] 时整组接口 503
+	empty := &Handler{}
+	recorder = httptest.NewRecorder()
+	empty.handleModels(recorder, newRequest(http.MethodGet, "/api/models", ""))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("未启用前端的模型接口状态码 = %d, want 503", recorder.Code)
+	}
+}
+
+// TTS 接口：引擎清单与试听（试听直接回音频，不入队）。
+func TestTTSEndpoints(t *testing.T) {
+	handler := &Handler{
+		TTSInfo: func() []TTSInfo {
+			return []TTSInfo{{Name: "openai_tts", Enabled: true, Ready: true, Voice: "alloy"}, {Name: "edge_tts"}}
+		},
+		TTSPreview: func(engine, voice, text string) ([]byte, error) {
+			if text == "boom" {
+				return nil, errors.New("合成失败")
+			}
+			return []byte("RIFFfake-wav"), nil
+		},
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.handleTTSList(recorder, newRequest(http.MethodGet, "/api/tts", ""))
+	if !strings.Contains(recorder.Body.String(), "openai_tts") {
+		t.Fatalf("引擎清单异常: %s", recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleTTSPreview(recorder, newRequest(http.MethodPost, "/api/tts/preview", `{"text":"你好","voice":"alloy"}`))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("试听状态码 = %d, want 200", recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "audio/wav" {
+		t.Fatalf("试听 Content-Type = %q, want audio/wav", got)
+	}
+	if recorder.Body.String() != "RIFFfake-wav" {
+		t.Fatalf("试听音频内容 = %q", recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleTTSPreview(recorder, newRequest(http.MethodPost, "/api/tts/preview", `{"text":"  "}`))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("空文本状态码 = %d, want 400", recorder.Code)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleTTSPreview(recorder, newRequest(http.MethodPost, "/api/tts/preview", `{"text":"boom"}`))
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("合成失败状态码 = %d, want 502", recorder.Code)
+	}
+
+	empty := &Handler{}
+	recorder = httptest.NewRecorder()
+	empty.handleTTSPreview(recorder, newRequest(http.MethodPost, "/api/tts/preview", `{"text":"你好"}`))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("未配置 TTS 状态码 = %d, want 503", recorder.Code)
+	}
+}
+
+// 推流接口：状态与启停；未启用 [stream] 时 503。
+func TestStreamEndpoints(t *testing.T) {
+	running := false
+
+	handler := &Handler{
+		StreamInfo: func() StreamInfo {
+			return StreamInfo{Enabled: true, Running: running, Streaming: running, Output: "rtmp://live.example.com/x?..."}
+		},
+		StreamStart: func() error { running = true; return nil },
+		StreamStop:  func() error { running = false; return nil },
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.handleStreamStatus(recorder, newRequest(http.MethodGet, "/api/stream", ""))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"enabled":true`) {
+		t.Fatalf("推流状态 = %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleStreamAction(recorder, newRequest(http.MethodPost, "/api/stream", `{"action":"start"}`))
+	if recorder.Code != http.StatusOK || !running {
+		t.Fatalf("开播 = %d, running=%v", recorder.Code, running)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleStreamAction(recorder, newRequest(http.MethodPost, "/api/stream", `{"action":"stop"}`))
+	if recorder.Code != http.StatusOK || running {
+		t.Fatalf("关播 = %d, running=%v", recorder.Code, running)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleStreamAction(recorder, newRequest(http.MethodPost, "/api/stream", `{"action":"restart"}`))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("非法动作状态码 = %d, want 400", recorder.Code)
+	}
+
+	empty := &Handler{}
+	recorder = httptest.NewRecorder()
+	empty.handleStreamStatus(recorder, newRequest(http.MethodGet, "/api/stream", ""))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("未启用推流状态码 = %d, want 503", recorder.Code)
+	}
+}

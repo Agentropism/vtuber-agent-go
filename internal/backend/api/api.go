@@ -39,6 +39,21 @@ type Handler struct {
 	Clients func() []string
 	// Upload 返回上报管线快照；nil 表示取不到。
 	Upload func() upload.PipelineStats
+	// ModelState 返回当前模型、可选清单与表情标签；nil 表示未启用 [frontend]。
+	ModelState func() (ModelState, error)
+	// ModelSwitch 热切换模型（重建清单与表情词表，并补发 hello）。
+	ModelSwitch func(name string) error
+	// EmotionShow 让前端预览一个表情，返回表达式下标。
+	EmotionShow func(label string) (int, error)
+	// TTSInfo 返回支持的 TTS 引擎与当前配置；nil 表示取不到。
+	TTSInfo func() []TTSInfo
+	// TTSPreview 合成一段试听音频（WAV）；nil 表示未配置 [tts].engines。
+	TTSPreview func(engine, voice, text string) ([]byte, error)
+	// StreamInfo 返回推流状态；nil 表示未启用 [stream]。
+	StreamInfo func() StreamInfo
+	// StreamStart/StreamStop 启停推流；nil 表示未启用 [stream]。
+	StreamStart func() error
+	StreamStop  func() error
 	// Started 是进程启动时间，用于算运行时长。
 	Started time.Time
 }
@@ -59,6 +74,13 @@ func (h *Handler) Routes() []server.Route {
 		{Pattern: "DELETE /api/memory/{id}", Handler: http.HandlerFunc(h.handleMemoryDelete)},
 		{Pattern: "GET /api/tools", Handler: http.HandlerFunc(h.handleToolsList)},
 		{Pattern: "POST /api/tools/{name}", Handler: http.HandlerFunc(h.handleToolCall)},
+		{Pattern: "GET /api/models", Handler: http.HandlerFunc(h.handleModels)},
+		{Pattern: "POST /api/models/active", Handler: http.HandlerFunc(h.handleModelSwitch)},
+		{Pattern: "POST /api/models/emotion", Handler: http.HandlerFunc(h.handleEmotionPreview)},
+		{Pattern: "GET /api/tts", Handler: http.HandlerFunc(h.handleTTSList)},
+		{Pattern: "POST /api/tts/preview", Handler: http.HandlerFunc(h.handleTTSPreview)},
+		{Pattern: "GET /api/stream", Handler: http.HandlerFunc(h.handleStreamStatus)},
+		{Pattern: "POST /api/stream", Handler: http.HandlerFunc(h.handleStreamAction)},
 	}
 }
 

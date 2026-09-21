@@ -4,9 +4,11 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/core/shared/emotion"
 
@@ -43,9 +45,14 @@ type Config struct {
 }
 
 // Frontend 是前端接入的对外门面。
+//
+// 模型与表情词表可以热切换（SwitchModel），所以它们受 mu 保护：切换是低频动作，
+// 但读它们的路径在热路径上——每次下发 hello、每次给播报算表情下标。
 type Frontend struct {
-	cfg      Config
-	hub      *hub
+	cfg Config
+	hub *hub
+
+	mu       sync.RWMutex
 	model    modelInfo
 	emotions *emotion.Map
 }
@@ -59,6 +66,21 @@ func New(cfg Config) (*Frontend, error) {
 		return nil, err
 	}
 
+	model := buildModelInfo(cfg, entry)
+
+	logger.Infof("前端已就绪: 角色=%s 模型=%s 表情标签=%d 个 表达式=%d 个",
+		cfg.Character.Name, model.Name, emotions.Len(), len(model.Expressions))
+
+	return &Frontend{
+		cfg:      cfg,
+		hub:      newHub(),
+		model:    model,
+		emotions: emotions,
+	}, nil
+}
+
+// buildModelInfo 把清单条目转成下发前端的模型信息（含缩放覆盖与表达式名）。
+func buildModelInfo(cfg Config, entry modelEntry) modelInfo {
 	model := modelInfo{
 		Name:        entry.Name,
 		URL:         entry.URL,
@@ -75,20 +97,15 @@ func New(cfg Config) (*Frontend, error) {
 		model.Scale = 1
 	}
 
-	logger.Infof("前端已就绪: 角色=%s 模型=%s 表情标签=%d 个 表达式=%d 个",
-		cfg.Character.Name, model.Name, emotions.Len(), len(model.Expressions))
-
-	return &Frontend{
-		cfg:      cfg,
-		hub:      newHub(),
-		model:    model,
-		emotions: emotions,
-	}, nil
+	return model
 }
 
 // Sink 返回播报投递实现，交给 broadcast.Queue 注入。
+//
+// 它持的是 Frontend 本身而不是词表快照：模型热切换后，Sink 要按新词表算表情下标。
+// 因此 Sink 是 Frontend 的一部分，不对外提供独立的构造器。
 func (f *Frontend) Sink() *Sink {
-	return NewSink(f.hub, f.emotions)
+	return &Sink{front: f}
 }
 
 // ClientCount 返回当前连接的前端数量。
@@ -100,8 +117,90 @@ func (f *Frontend) ClientCount() int {
 //
 // 对话侧用它把回复里的 [joy] 之类标签摘出来写进播报条目，
 // 这样同一套词表只解析一次，前后端不会各写一份。
+//
+// 返回的是「当前」词表：模型热切换后拿到的是新的一份，调用方不要长期缓存它。
 func (f *Frontend) Emotions() *emotion.Map {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
 	return f.emotions
+}
+
+// Model 返回当前模型信息。
+func (f *Frontend) Model() modelInfo {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	return f.model
+}
+
+// SwitchModel 切换到指定模型：重建模型信息与表情词表，并给已连接的前端补发 hello。
+//
+// 热切换能成立，靠的是没有一个地方长期拿着词表快照：会话侧用 Emotions 函数取当前值，
+// Sink 在投递时才换算表情下标，页面靠这条补发的 hello 换模型。
+func (f *Frontend) SwitchModel(name string) (modelInfo, error) {
+	entry, emotions, err := loadCatalog(f.cfg.ModelDict, f.cfg.ModelsDir, name)
+	if err != nil {
+		return modelInfo{}, err
+	}
+
+	model := buildModelInfo(f.cfg, entry)
+
+	f.mu.Lock()
+	f.model = model
+	f.emotions = emotions
+	f.mu.Unlock()
+
+	f.broadcastHello()
+
+	logger.Infof("模型已切换: %s（表情标签 %d 个）", model.Name, emotions.Len())
+
+	return model, nil
+}
+
+// AvailableModels 返回模型目录下可用的模型（按目录扫描，不依赖 model_dict.json）。
+func (f *Frontend) AvailableModels() ([]modelInfo, error) {
+	entries, err := scanModels(f.cfg.ModelsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	models := make([]modelInfo, 0, len(entries))
+	for _, entry := range entries {
+		models = append(models, modelInfo{Name: entry.Name, URL: entry.URL, Scale: entry.Scale})
+	}
+
+	return models, nil
+}
+
+// EmotionLabels 返回当前词表里的标签名，按模型定义顺序。
+func (f *Frontend) EmotionLabels() []string {
+	labels := f.Emotions()
+
+	entries := labels.Entries()
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name)
+	}
+
+	return names
+}
+
+// PreviewEmotion 让前端预览一个表情：把标签换算成表达式下标后下发。
+func (f *Frontend) PreviewEmotion(label string) (int, error) {
+	labels := f.Emotions()
+
+	index, ok := labels.Index(label)
+	if !ok {
+		return -1, fmt.Errorf("表情标签不在当前模型里: %s", label)
+	}
+
+	f.hub.broadcast(context.Background(), message{
+		Type: "emotion",
+		Data: map[string]any{"label": label, "emotion": index},
+	})
+
+	return index, nil
 }
 
 // ClientWSHandler 处理 /api/client-ws：浏览器接入、收下行播报、回播报回执。
@@ -173,20 +272,34 @@ func (f *Frontend) FaviconHandler() http.Handler {
 	})
 }
 
-// sendHello 把角色与模型信息下发给刚连上的浏览器。
-func (f *Frontend) sendHello(ctx context.Context, client *client) error {
-	payload, err := json.Marshal(message{
+// helloMessage 组装 hello 下行消息：新连接与模型热切换后共用同一份。
+func (f *Frontend) helloMessage() message {
+	return message{
 		Type: "hello",
 		Data: map[string]any{
 			"character": f.cfg.Character,
-			"model":     f.model,
+			"model":     f.Model(),
 		},
-	})
+	}
+}
+
+// sendHello 把角色与模型信息下发给刚连上的浏览器。
+func (f *Frontend) sendHello(ctx context.Context, client *client) error {
+	payload, err := json.Marshal(f.helloMessage())
 	if err != nil {
 		return err
 	}
 
 	return client.write(ctx, payload)
+}
+
+// broadcastHello 给所有已连接的前端补发 hello（模型热切换后用）。
+func (f *Frontend) broadcastHello() {
+	if f.hub.count() == 0 {
+		return
+	}
+
+	f.hub.broadcast(context.Background(), f.helloMessage())
 }
 
 // readLoop 处理浏览器上行消息。

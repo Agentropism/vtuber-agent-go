@@ -8,7 +8,6 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/broadcast"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/core/logger"
-	"github.com/Agentropism/vtuber-agent-go/internal/core/shared/emotion"
 )
 
 // playbackGrace 是等待前端回执时在音频时长之外额外给的宽限。
@@ -20,14 +19,8 @@ const playbackGrace = 5 * time.Second
 // 因此这里会等前端回执——不这样的话，队列会按「TTS 合成完」而不是「放完了」推进，
 // 多句连播就会叠在一起。
 type Sink struct {
-	hub      *hub
-	emotions *emotion.Map
+	front    *Frontend
 	sequence atomic.Uint64
-}
-
-// NewSink 构造播报投递实现。
-func NewSink(h *hub, emotions *emotion.Map) *Sink {
-	return &Sink{hub: h, emotions: emotions}
 }
 
 // speakData 是下发给前端的播报内容。
@@ -43,7 +36,7 @@ type speakData struct {
 
 // Play 把一段播报送到所有前端，并等它播完。
 func (s *Sink) Play(ctx context.Context, item broadcast.Item, pcm []byte) error {
-	if s.hub.count() == 0 {
+	if s.front.hub.count() == 0 {
 		logger.Debugf("没有前端连接，跳过播报: %s", item.Text)
 		return nil
 	}
@@ -51,10 +44,10 @@ func (s *Sink) Play(ctx context.Context, item broadcast.Item, pcm []byte) error 
 	duration := audioDuration(pcm)
 	seq := s.sequence.Add(1)
 
-	waiter := s.hub.registerWaiter(seq)
-	defer s.hub.unregisterWaiter(seq)
+	waiter := s.front.hub.registerWaiter(seq)
+	defer s.front.hub.unregisterWaiter(seq)
 
-	sent := s.hub.broadcast(ctx, message{
+	sent := s.front.hub.broadcast(ctx, message{
 		Type: "speak",
 		Data: speakData{
 			Seq:      seq,
@@ -97,7 +90,7 @@ func (s *Sink) expression(item broadcast.Item) int {
 		return -1
 	}
 
-	index, ok := s.emotions.Index(item.Emotion)
+	index, ok := s.front.Emotions().Index(item.Emotion)
 	if !ok {
 		logger.Warnf("表情标签不在当前模型的 emo_map 里，忽略: %s", item.Emotion)
 		return -1

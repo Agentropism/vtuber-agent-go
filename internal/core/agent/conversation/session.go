@@ -170,9 +170,11 @@ type SessionsConfig struct {
 	// IdleSpeakPrompt 是主动发言时给模型的提示词，为空用内置兜底。
 	IdleSpeakPrompt string
 
-	Reply       ReplyFunc     // 文本回复下行；为空时只生成不发送
-	Broadcast   Broadcaster   // 语音播报队列；为空时跳过播报
-	Emotions    *emotion.Map  // 表情词表；非空时回复里的 [joy] 标签会被摘出来放进播报条目
+	Reply     ReplyFunc   // 文本回复下行；为空时只生成不发送
+	Broadcast Broadcaster // 语音播报队列；为空时跳过播报
+	// Emotions 返回当前表情词表；非空时回复里的 [joy] 标签会被摘出来放进播报条目。
+	// 用函数而不是快照：模型可以热切换，会话侧必须看到切换后的词表。
+	Emotions    func() *emotion.Map
 	QueueSize   int           // 每个会话的待处理消息上限，<=0 取默认 16
 	TurnTimeout time.Duration // 单轮对话超时，<=0 取默认 60s
 }
@@ -450,10 +452,12 @@ func (s *session) enqueue(event InboundEvent, text string) {
 
 	emotionName := ""
 	if s.cfg.Emotions != nil {
-		if names := s.cfg.Emotions.ExtractNames(text); len(names) > 0 {
-			emotionName = names[0]
+		if labels := s.cfg.Emotions(); labels != nil {
+			if names := labels.ExtractNames(text); len(names) > 0 {
+				emotionName = names[0]
+			}
+			text = labels.Strip(text)
 		}
-		text = s.cfg.Emotions.Strip(text)
 	}
 
 	text = strings.TrimSpace(text)

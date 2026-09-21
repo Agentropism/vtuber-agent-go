@@ -278,6 +278,19 @@ function handleMessage(msg) {
       break;
     }
 
+    case 'emotion': {
+      // 表情预览：服务端已换算成表达式下标，只换表情、不出声
+      const data = msg.data || {};
+      if (model && data.emotion >= 0) {
+        try {
+          model.expression(data.emotion);
+        } catch (err) {
+          console.warn('切换表情失败', err);
+        }
+      }
+      break;
+    }
+
     default:
       console.debug('忽略消息', msg);
   }

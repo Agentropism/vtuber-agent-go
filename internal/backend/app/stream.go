@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/backend/api"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/broadcast"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/config"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/stream"
@@ -33,6 +34,13 @@ type streamRuntime struct {
 
 	mu       sync.Mutex
 	streamer *stream.Streamer
+
+	// runCancel/runDone 表示推流循环在跑；受 mu 保护，供启停与状态查询用。
+	runCancel context.CancelFunc
+	runDone   chan struct{}
+
+	// output 是最近一次解析出的推流地址（含 stream key，对外必须裁剪后再给）。
+	output string
 
 	// playing 计数在播报期间不为 0：保活补静音必须让位，否则会把音频时间线撑长
 	playing atomic.Int32
@@ -217,6 +225,86 @@ func (r *streamRuntime) Run(ctx context.Context) error {
 	}
 }
 
+// Start 启动推流循环；已经在跑时直接返回（可以安全地重复调用）。
+//
+// ctx 是进程生命周期：循环内部按退避重试，直到推流建立或 ctx 结束。
+func (r *streamRuntime) Start(ctx context.Context) {
+	r.mu.Lock()
+	if r.runCancel != nil {
+		r.mu.Unlock()
+		logger.Info("推流已在运行，忽略重复启动")
+		return
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	r.runCancel = cancel
+	r.runDone = done
+	r.mu.Unlock()
+
+	go func() {
+		defer close(done)
+		if err := r.Run(runCtx); err != nil && runCtx.Err() == nil {
+			logger.Errorf("推流已停止: %v", err)
+		}
+	}()
+
+	logger.Info("推流已启动")
+}
+
+// Stop 停止推流循环，并等它收尾（关播在 runOnce 的 defer 里）。
+//
+// 必须等：进程先退出等于把直播间挂成「直播中」——实测踩到过（进程没了，B 站侧
+// live_status 仍是 1、还挂着观众）。
+func (r *streamRuntime) Stop() {
+	r.mu.Lock()
+	cancel, done := r.runCancel, r.runDone
+	r.runCancel, r.runDone = nil, nil
+	r.mu.Unlock()
+
+	if cancel == nil {
+		return
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(shutdownTimeout):
+		logger.Warn("等推流收尾超时，关播可能未完成")
+	}
+
+	logger.Info("推流已停止")
+}
+
+// Running 报告推流循环是否在跑（不代表 ffmpeg 已经推上）。
+func (r *streamRuntime) Running() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return r.runCancel != nil
+}
+
+// CurrentOutput 返回裁剪过的推流地址（去掉查询串里的 stream key）。
+func (r *streamRuntime) CurrentOutput() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return clipOutput(r.output)
+}
+
+// clipOutput 只保留 scheme://host/path，查询串里有 stream key，绝不能外泄。
+func clipOutput(output string) string {
+	if output == "" {
+		return ""
+	}
+
+	if index := strings.Index(output, "?"); index >= 0 {
+		return output[:index] + "?..."
+	}
+
+	return output
+}
+
 // runOnce 走一遍完整链路：开播 → 起画面 → 推流；返回是否成功开播过。
 func (r *streamRuntime) runOnce(ctx context.Context) (bool, error) {
 	output, started, err := r.resolveOutput(ctx)
@@ -249,6 +337,7 @@ func (r *streamRuntime) runOnce(ctx context.Context) (bool, error) {
 	r.streamer = streamer
 	r.streaming = true
 	r.pending = nil
+	r.output = output
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
@@ -463,4 +552,55 @@ func (s *streamSink) Play(ctx context.Context, item broadcast.Item, pcm []byte) 
 	}
 
 	return nil
+}
+
+// streamInfoFunc 把推流状态汇总给接口层；未启用推流时返回 nil（接口回 503）。
+func streamInfoFunc(runtime *streamRuntime, cfg *config.Config) func() api.StreamInfo {
+	if runtime == nil {
+		return nil
+	}
+
+	return func() api.StreamInfo {
+		status := runtime.Status()
+
+		info := api.StreamInfo{
+			Enabled:   cfg.Stream.Enabled,
+			Running:   runtime.Running(),
+			Streaming: status.Streaming,
+			Output:    runtime.CurrentOutput(),
+			VerifyURL: runtime.verifyURL,
+		}
+		if status.Pending != nil {
+			info.PendingCode = status.Pending.Code
+			info.PendingNote = status.Pending.Message
+		}
+
+		return info
+	}
+}
+
+// streamStartFunc 装配「开播/开始推流」。
+func streamStartFunc(runtime *streamRuntime) func() error {
+	if runtime == nil {
+		return nil
+	}
+
+	return func() error {
+		// 刻意用 Background 而不是请求的 ctx：推流要活过这次 HTTP 请求
+		// （被请求上下文带着取消，就等于「一返回就停推」）。进程退出由 Stop 收尾。
+		runtime.Start(context.Background())
+		return nil
+	}
+}
+
+// streamStopFunc 装配「关播/停止推流」：会等关播收尾（最长 shutdownTimeout）。
+func streamStopFunc(runtime *streamRuntime) func() error {
+	if runtime == nil {
+		return nil
+	}
+
+	return func() error {
+		runtime.Stop()
+		return nil
+	}
 }

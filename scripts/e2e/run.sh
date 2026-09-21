@@ -172,6 +172,41 @@ if [ "$bad_code" != "400" ]; then
     exit 1
 fi
 
+# 模型与表情（只在模型目录存在、即启用了 [frontend] 时才有意义）
+if [ -d "$MODELS_DIR" ]; then
+    models_body="$(api_get /api/models)"
+    echo "$models_body" | grep -q '"current"' || { echo "/api/models 响应异常: $models_body" >&2; exit 1; }
+    echo "$models_body" | grep -q 'mao_pro' || { echo "/api/models 没有列出模型: $models_body" >&2; exit 1; }
+
+    emotion_label="$(echo "$models_body" | sed -n 's/.*"emotions":\["\([^"]*\)".*/\1/p')"
+    if [ -n "$emotion_label" ]; then
+        emotion_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "$API/api/models/emotion" \
+            -H 'Content-Type: application/json' -d "{\"label\":\"$emotion_label\"}")"
+        if [ "$emotion_code" != "200" ]; then
+            echo "/api/models/emotion 状态码 = $emotion_code, want 200（标签 $emotion_label）" >&2
+            exit 1
+        fi
+    fi
+fi
+
+# TTS：清单里有配置的引擎，试听直接回 WAV（不入队）
+tts_body="$(api_get /api/tts)"
+echo "$tts_body" | grep -q 'openai_tts' || { echo "/api/tts 没有列出配置的引擎: $tts_body" >&2; exit 1; }
+
+preview_meta="$(curl -s -o /dev/null -w '%{http_code} %{content_type}' --max-time 20 -X POST "$API/api/tts/preview" \
+    -H 'Content-Type: application/json' -d '{"text":"试听冒烟"}')"
+if [ "$preview_meta" != "200 audio/wav" ]; then
+    echo "/api/tts/preview = $preview_meta, want 200 audio/wav" >&2
+    exit 1
+fi
+
+# 推流：e2e 没配 [stream]，状态与启停都该是 503
+stream_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$API/api/stream")"
+if [ "$stream_code" != "503" ]; then
+    echo "未配置 [stream] 时 /api/stream 状态码 = $stream_code, want 503" >&2
+    exit 1
+fi
+
 # 路径已切换：旧路径必须下线（注入改走 /api/speak，页面改占根路径）
 legacy_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "$API/inject" \
     -H 'Content-Type: application/json' -d '{"text":"旧路径应已下线"}')"

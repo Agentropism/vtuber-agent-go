@@ -16,7 +16,11 @@ const wavHeaderSize = 44
 //
 // 浏览器只认容器格式：<audio> 与解码器都不吃裸 PCM，而 tts 包的契约恰好是裸 PCM，
 // 所以在最靠近浏览器的一层补头，避免让每个 TTS 引擎各自拼容器。
-func encodeWAV(pcm []byte) []byte {
+// EncodeWAV 给裸 PCM 补上 44 字节 WAV 头。
+//
+// 裸 PCM 是内部契约（tts 的引擎链统一输出），浏览器要吃带头的；接口层的 TTS 试听
+// 也走这里，避免出现第二份手工拼的 WAV 头。
+func EncodeWAV(pcm []byte) []byte {
 	out := make([]byte, wavHeaderSize+len(pcm))
 
 	byteRate := tts.SampleRate * tts.Channels * tts.BytesPerSample
@@ -45,7 +49,7 @@ func encodeAudio(pcm []byte) string {
 	var buf bytes.Buffer
 	buf.Grow(base64.StdEncoding.EncodedLen(wavHeaderSize + len(pcm)))
 	encoder := base64.NewEncoder(base64.StdEncoding, &buf)
-	_, _ = encoder.Write(encodeWAV(pcm))
+	_, _ = encoder.Write(EncodeWAV(pcm))
 	_ = encoder.Close()
 
 	return buf.String()

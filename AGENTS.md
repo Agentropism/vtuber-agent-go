@@ -122,6 +122,11 @@ POST /api/speak ─────────────────────�
 | `GET /api/sessions/{id}/history` | 该渠道的历史消息（只回 user/assistant，不回系统提示词） |
 | `POST /api/sessions/{id}/messages` | 以观众身份发消息：走 `upload` 管线，等同平台事件，会落记忆 |
 | `GET /api/status` | 运行状态：接入端在线平台、播报计数、上报管线快照、会话数 |
+| `GET/POST /api/memory`、`DELETE /api/memory/{id}` | 记忆：召回/最近快照、新增、墓碑删除（ID = 文件行号） |
+| `GET /api/tools`、`POST /api/tools/{name}` | 工具清单；直接调用只放行只读工具（有副作用的 403） |
+| `GET /api/models`、`POST /api/models/active`、`POST /api/models/emotion` | 模型清单、热切换（重建目录与词表 + 补发 hello）、表情预览 |
+| `GET /api/tts`、`POST /api/tts/preview` | TTS 引擎清单（enabled/ready）；试听直接回 WAV，不入队 |
+| `GET /api/stream`、`POST /api/stream` | 推流状态与启停；`stop` 会等关播收尾，`output` 已裁剪掉 stream key |
 
 - **`/api/*` 不鉴权**：暴露面等于 `[server].addr` 的绑定范围；写操作（播报、替观众发消息、第二阶段的推流控制）同样开放，绑 `0.0.0.0` 前先想清楚这一点。
 - 接口层不碰会话内部结构：渠道快照与历史由 `conversation.Sessions` 的 `Channels()` / `History()` 提供，接口层只做脱敏与 JSON 化。
@@ -143,7 +148,8 @@ POST /api/speak ─────────────────────�
 
 ### 推流（替代 OBS）
 
-配了 `[stream].enabled` 后由 `app.Run` 起停，链路是：
+配了 `[stream].enabled` 后进程启动就自动推流；运行期也可以由 `/api/stream` 启停
+（两条路径都走 `streamRuntime.Start/Stop`，`Stop` 会等关播收尾）。链路是：
 
 ```text
 开播取地址(B站 web 接口) → Xvfb 虚拟屏 → Chrome 全屏跑 /?autostart=1（画面来源）
