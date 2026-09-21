@@ -115,7 +115,7 @@ sensitive_words_file = ""
 dedup_ttl = "600s"
 
 [frontend]
-# 前端接入（浏览器页面 + /client-ws + 模型静态资源）；配了模型目录即自动启用
+# 前端接入（根路径页面 + /api/client-ws 长连接 + /api/models/ 模型资源）；配了模型目录即自动启用
 enabled = false
 # Live2D 模型根目录，结构为 <模型名>/runtime/<模型名>.model3.json
 models_dir = "../Open-LLM-VTuber/live2d-models"
@@ -140,7 +140,7 @@ path = "/bilibili"
 
 # 推流：把画面与声音推到 RTMP，替代 OBS。开启后链路是——
 #   1) 用下面的 cookie 与 room_id 调 B 站 web 接口开播，拿回推流地址与密钥；
-#   2) 本进程起 Xvfb 虚拟屏 + Chrome 全屏跑 /web/ 页面当画面；
+#   2) 本进程起 Xvfb 虚拟屏 + Chrome 全屏跑根路径页面当画面；
 #   3) ffmpeg 抓屏 + 播报队列的 PCM → RTMP。
 # 进程退出时会调关播接口。只要 output 填了完整地址，就跳过第 1 步直接用这个地址。
 [stream]

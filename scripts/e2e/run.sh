@@ -37,7 +37,7 @@ go build -o "$WORK_DIR/vtuber-agent-go" ./cmd/vtuber-agent-go/
 cp -r characters "$WORK_DIR/"
 cp scripts/e2e/fakes.py "$WORK_DIR/"
 
-# 前端只在模型目录存在时启用：缺模型时 agent/frontend 会拒绝启动
+# 前端只在模型目录存在时启用：缺模型时 web 包会拒绝启动
 FRONTEND_BLOCK=""
 if [ -d "$MODELS_DIR" ]; then
     FRONTEND_BLOCK=$(cat <<TOML
