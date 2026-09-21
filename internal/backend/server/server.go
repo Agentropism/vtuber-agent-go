@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -59,12 +60,9 @@ func ProvideServer(cfg *config.Config, extra ...Route) *http.Server {
 		})
 	}
 
-	// /inject 必须显式注册：客户端路径可以配成 "/"，会兜住所有路径，
-	// 否则注入请求会被当成 WebSocket 握手（405），而不是拿到明确的状态码。
-	mux.HandleFunc("/inject", func(w http.ResponseWriter, r *http.Request) {
-		handleInject(w, r)
-	})
-	patterns["/inject"] = "inject"
+	// 注入接口 /inject 与 /api/* 都是 extra 路由（由 app 从 api 包挂上来）。
+	// 客户端路径可以配成 "/" 兜住所有路径，但 ServeMux 按最长前缀匹配，
+	// 这些更具体的 pattern 仍会落到自己的处理函数上。
 
 	// 额外路由：与接入路径冲突时跳过并报错，而不是让 http.ServeMux panic
 	// （重复注册同一个 pattern 会直接 panic，把整个进程带走）。
@@ -185,6 +183,22 @@ func unregisterClient(platform string, client *clientConnection) {
 	if clients.connections[platform] == client {
 		delete(clients.connections, platform)
 	}
+}
+
+// ConnectedPlatforms 返回当前有连接在线的平台名，按字典序排列。
+//
+// 只读快照，供观测接口（/api/status）展示接入端在线情况。
+func ConnectedPlatforms() []string {
+	clients.RLock()
+	platforms := make([]string, 0, len(clients.connections))
+	for platform := range clients.connections {
+		platforms = append(platforms, platform)
+	}
+	clients.RUnlock()
+
+	sort.Strings(platforms)
+
+	return platforms
 }
 
 func (c *clientConnection) write(ctx context.Context, payload []byte) error {

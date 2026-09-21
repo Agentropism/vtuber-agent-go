@@ -28,6 +28,14 @@ const (
 	KindLiveEnd       Kind = "live_end"        // 下播
 )
 
+// 渠道号前缀：channel_id 的构造约定，跨模块共享（会话路由、上传管线、接口层都按它还原平台）。
+const (
+	// ChannelPrefixGroup 是 QQ 群的渠道号前缀，例如 group_10001。
+	ChannelPrefixGroup = "group_"
+	// ChannelPrefixRoom 是 B 站直播间的渠道号前缀，例如 room_12345。
+	ChannelPrefixRoom = "room_"
+)
+
 // NeedsReply 表示该种类是否需要进入会话、由 LLM 生成回复。
 //
 // 礼物、醒目留言与大航海都需要被回应(致谢),因此与聊天消息同等对待;

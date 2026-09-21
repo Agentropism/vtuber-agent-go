@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Agentropism/vtuber-agent-go/internal/backend/api"
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/server"
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/web"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/broadcast"
@@ -72,9 +73,11 @@ func Initialize() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	// /inject 与事件回复共用这一条队列；未装配播报时保持未注入，接口返回 503
+	// 播报注入（/api/speak，过渡期还含旧路径 /inject）与事件回复共用这一条队列；
+	// 未装配播报时 speak 为 nil，接口返回 503。装配成路由见下方的 apiHandler。
+	var speak func(text, emotion string) error
 	if queue != nil {
-		server.SetInjectHandler(provideInject(queue))
+		speak = provideSpeak(queue)
 	}
 
 	// 长期记忆：JSON Lines 存储 + 关键词召回；未配置路径时为 nil
@@ -96,6 +99,18 @@ func Initialize() (*App, error) {
 		upload.SetHandler(sessions.Handle)
 	}
 
+	// 前端接口层：配置只读、播报注入、会话读写、运行状态。
+	// 能力用 nil 表示未装配（没配 TTS 就没有播报、没配 LLM 就没有会话），接口据此返回 503。
+	apiHandler := &api.Handler{
+		Config:   config.ProvideConfig,
+		Speak:    speak,
+		Sessions: sessions,
+		Queue:    queue,
+		Clients:  server.ConnectedPlatforms,
+		Upload:   upload.Stats,
+		Started:  started,
+	}
+
 	if err := upload.Init(upload.Options{
 		QueueSize:          cfg.Memory.QueueSize,
 		QueueWaitTimeout:   cfg.Memory.QueueWaitTimeout.Std(),
@@ -108,6 +123,7 @@ func Initialize() (*App, error) {
 	Register()
 
 	routes := frontendRoutes(front)
+	routes = append(routes, apiHandler.Routes()...)
 	if login != nil {
 		routes = append(routes, login.routes()...)
 	}

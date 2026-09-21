@@ -3,9 +3,12 @@ package upload
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/core/gateway/event/bilibililive"
@@ -21,6 +24,9 @@ const (
 	EventTypeMessage = "message"
 	EventTypeNotice  = "notice"
 )
+
+// channelPrefixGroup 是 QQ 群的渠道号前缀，取值来自共享契约（event.ChannelPrefixGroup）。
+const channelPrefixGroup = event.ChannelPrefixGroup
 
 type platformEvent struct {
 	Type string `json:"type"`
@@ -58,7 +64,8 @@ type platformContent struct {
 // ---- 管线状态 ----
 
 var (
-	queue            chan []byte // 有界缓存，Init 时按 QueueSize 创建
+	queue            chan []byte   // 有界缓存，Init 时按 QueueSize 创建
+	dropped          atomic.Uint64 // 累计丢弃的事件数（未注入处理器、缓存满超时、网关关闭）
 	done             = make(chan struct{})
 	queueWaitTimeout time.Duration // 缓存满时入队等待上限，0=无限等待
 	filter           *wordfilter.Filter
@@ -166,6 +173,7 @@ func consumeLoop(pending <-chan []byte, stop <-chan struct{}) {
 			h := currentHandler()
 			if h == nil {
 				logger.Warn("未注入事件处理器，丢弃事件")
+				dropped.Add(1)
 				continue
 			}
 			h(payload)
@@ -212,6 +220,70 @@ func UploadNotice(ctx context.Context, platform string, userID int64, text strin
 	upload(ctx, buildNoticePlatformEvent(platform, userID, text))
 }
 
+// PipelineStats 是上传管线的对外快照，供观测接口（/api/status）读取。
+type PipelineStats struct {
+	QueueLen  int    `json:"queue_len"`  // 当前缓存中的事件数
+	QueueSize int    `json:"queue_size"` // 缓存容量
+	Dropped   uint64 `json:"dropped"`    // 累计丢弃（未注入处理器、缓存满超时、网关关闭）
+}
+
+// Stats 返回上传管线的当前快照。
+func Stats() PipelineStats {
+	stats := PipelineStats{Dropped: dropped.Load()}
+	if queue != nil {
+		stats.QueueLen = len(queue)
+		stats.QueueSize = cap(queue)
+	}
+
+	return stats
+}
+
+// Ready 表示管线有消费方（终端处理器已注入）。
+//
+// 没有消费方时事件会被静默丢弃，接口层据此返回 503 而不是假装已接收。
+func Ready() bool { return currentHandler() != nil }
+
+// SimulatedChat 是一次「以观众身份说话」的请求。
+//
+// 它与平台事件走同一条管线：去重、敏感词、背压、分发门控一个不落。接口层是调试入口，
+// 但行为必须与真实弹幕一致，否则等于给会话开了第二条旁路。
+type SimulatedChat struct {
+	Platform    string // qq / bilibili
+	ChannelID   string // group_10001 / room_12345
+	ChannelType string // group / live_room
+	UserID      string
+	UserName    string
+	Text        string
+}
+
+// UploadSimulatedChat 把模拟观众消息送进上传管线。
+//
+// 不带 message_id：平台重传才需要去重，接口重发同一条消息是有意的（调试）。
+func UploadSimulatedChat(ctx context.Context, chat SimulatedChat) error {
+	if strings.TrimSpace(chat.Text) == "" {
+		return errors.New("消息文本为空")
+	}
+
+	kind := event.KindDanmaku
+	if strings.HasPrefix(chat.ChannelID, channelPrefixGroup) {
+		kind = event.KindGroupMessage
+	}
+
+	upload(ctx, platformEvent{
+		Type:         EventTypeMessage,
+		Kind:         kind,
+		PlatformName: chat.Platform,
+		ChannelID:    chat.ChannelID,
+		ChannelType:  chat.ChannelType,
+		UserID:       chat.UserID,
+		UserName:     chat.UserName,
+		ContentText:  chat.Text,
+		Timestamp:    time.Now().Unix(),
+	})
+
+	return nil
+}
+
 // ---- 内部 ----
 
 // BeginDispatch 创建本次事件分发的上传暂存区，并挂到返回的 ctx 上。
@@ -245,12 +317,14 @@ func enqueue(payload []byte) {
 	// 未注入终端处理器时无消费方：非阻塞丢弃，避免无限等待挂起事件链
 	if currentHandler() == nil {
 		logger.Warn("未注入事件处理器，丢弃事件")
+		dropped.Add(1)
 		return
 	}
 	// done 已关闭时直接丢弃，避免 select 在关闭与未满之间随机落到入队分支
 	select {
 	case <-done:
 		logger.Warn("网关已关闭，丢弃事件")
+		dropped.Add(1)
 		return
 	default:
 	}
@@ -260,6 +334,7 @@ func enqueue(payload []byte) {
 			logger.Debug("上传事件已入队")
 		case <-done:
 			logger.Warn("上传缓存已满且网关关闭，丢弃事件")
+			dropped.Add(1)
 		}
 		return
 	}
@@ -270,8 +345,10 @@ func enqueue(payload []byte) {
 		logger.Debug("上传事件已入队")
 	case <-timer.C:
 		logger.Error("上传缓存已满且等待超时，丢弃事件")
+		dropped.Add(1)
 	case <-done:
 		logger.Warn("上传缓存已满且网关关闭，丢弃事件")
+		dropped.Add(1)
 	}
 }
 
@@ -313,12 +390,12 @@ func buildPlatformEvent(platform string, e onebot.MessageGroupEvent) platformEve
 
 	channelName := e.GroupName
 	if channelName == "" {
-		channelName = fmt.Sprintf("group_%d", e.GroupID)
+		channelName = fmt.Sprintf(channelPrefixGroup+"%d", e.GroupID)
 	}
 
 	senderID := strconv.FormatInt(e.UserID, 10)
 	messageID := strconv.FormatInt(e.MessageID, 10)
-	channelID := fmt.Sprintf("group_%d", e.GroupID)
+	channelID := fmt.Sprintf(channelPrefixGroup+"%d", e.GroupID)
 
 	return platformEvent{
 		Type:           EventTypeMessage,
@@ -471,7 +548,7 @@ func buildBilibiliEventPlatformEvent(
 	channelName := ""
 	channelType := ""
 	if roomID != 0 {
-		channelID = fmt.Sprintf("room_%d", roomID)
+		channelID = fmt.Sprintf(event.ChannelPrefixRoom+"%d", roomID)
 		channelName = fmt.Sprintf("直播间 %d", roomID)
 		channelType = "live_room"
 	}

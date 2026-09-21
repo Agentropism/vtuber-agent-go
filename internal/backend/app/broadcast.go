@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Agentropism/vtuber-agent-go/internal/backend/server"
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/web"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/broadcast"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/config"
@@ -55,17 +54,17 @@ func provideBroadcast(cfg *config.Config, front *web.Frontend, streaming *stream
 	return queue, nil
 }
 
-// provideInject 装配 /inject 的实现：把注入请求交给统一播报队列。
+// provideSpeak 装配播报注入：把 POST /api/speak（过渡期还包含旧路径 /inject）的文本交给统一播报队列。
 //
 // 注入条目固定走 PriorityProactive——它不是观众带来的事件，属于「非事件驱动的话」，
 // 因而排在弹幕、礼物与醒目留言之后，待机发言之前。要调档位改这里的取值即可。
 // 队列的满/拒绝与抢占由 broadcast 自己记录日志，这里不重复记。
-func provideInject(queue *broadcast.Queue) server.InjectFunc {
-	return func(req server.InjectRequest) error {
+func provideSpeak(queue *broadcast.Queue) func(text, emotion string) error {
+	return func(text, emotion string) error {
 		if !queue.Enqueue(broadcast.Item{
 			Priority: broadcast.PriorityProactive,
-			Text:     req.Text,
-			Emotion:  req.Emotion,
+			Text:     text,
+			Emotion:  emotion,
 			Source:   "inject",
 		}) {
 			return errBroadcastQueueFull

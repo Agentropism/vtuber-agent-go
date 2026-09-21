@@ -28,7 +28,8 @@ internal/core/        业务与领域能力:出站 HTTP 客户端可以有,服�
   stream/             推流层:开播取地址(B站 web 接口)+ Xvfb/Chrome 渲染 + ffmpeg 抓屏混音 → RTMP;由 [stream] 驱动
 internal/backend/     传输与接入:HTTP/WS 服务端、前端资源托管、装配
   app/                装配:config → logger → 注入 → 注册 handler → 路由
-  server/             WS 接入与 Action 写回 + POST /inject 播报注入
+  api/                对前端的 REST 接口:配置只读、播报注入、会话读写、运行状态(契约见 docs/API.md)
+  server/             WS 接入与 Action 写回(平台侧连接管理)
   web/                /client-ws 协议、Live2D 页面与模型托管、播报 Sink;页面资源 embed 自顶层 frontend/
 frontend/             前端工程源码(页面 + libs);go generate 同步到 internal/backend/web/assets/(产物 gitignore)
 characters/ scripts/ config.toml.example   非 Go 资产,与 Go 包同层
@@ -56,7 +57,7 @@ go mod tidy                      # 清理依赖
 2. 泛型 `ActionList[T].Run(event)` 遍历所有注册 handler — **所有 handler 都执行**，但只返回**最后一个非零 Action**
 3. 零 Action 判定：`Action=="" && Params==nil && Echo==nil`
 
-添加新事件处理：在 `internal/app/register.go` 中调用 `event.XXXActions.Add(func(e XXXEvent) action.Action { ... })`。
+添加新事件处理：在 `internal/backend/app/register.go` 中调用 `event.XXXActions.Add(func(e XXXEvent) action.Action { ... })`。
 `senders.RegisterNotice()` 需传入 `platform` 参数以正确标记上传来源。
 
 ### 多平台架构
@@ -76,9 +77,9 @@ path = "/bilibili"
 ```
 
 - `server` 包为每个 `client.Path` 注册路由，通过 `context.WithValue` 传递平台标识
-- `internal/app/register.go` 中 `registerQQ()` / `registerBilibili()` 分别注册各平台 handler
+- `internal/backend/app/register.go` 中 `registerQQ()` / `registerBilibili()` 分别注册各平台 handler
 - 上传时 `Upload(ctx, platform, event)` / `UploadNotice(ctx, platform, userID, text)` 的 `platform` 参数写入 `platformEvent.PlatformName`
-- **网关不含 B 站协议实现**：连开放平台、鉴权、心跳、重连、拆帧都由**外部上报端**负责，它经 `/bilibili` 上报事件信封；凭据配在上报端自己那里。上报端要求与已知坑见 `docs/BILIBILI_INGEST.md`（2026-09 删除了原内置 Go 客户端 `internal/gateway/bilibili`，它的实测缺陷清单已转成该文档的验收清单）
+- **网关不含 B 站协议实现**：连开放平台、鉴权、心跳、重连、拆帧都由**外部上报端**负责，它经 `/bilibili` 上报事件信封；凭据配在上报端自己那里。上报端要求与已知坑见 `docs/BILIBILI_INGEST.md`（2026-09 删除了原内置 Go 客户端 `internal/core/gateway/bilibili`，它的实测缺陷清单已转成该文档的验收清单）
 
 ### 事件上行与 agent 接入
 
@@ -86,32 +87,48 @@ path = "/bilibili"
 
 - `Init(Options)` 在 `app.Initialize()` 中调用一次；Options 承载缓存容量、等待上限、敏感词库、去重窗口等配置
 - 事件终端由 `SetHandler(fn func(payload []byte))` 注入，**进程内异步方法调用**，不再连远端 WebSocket；未注入时事件被丢弃并记录日志
-- 管线从前到后：去重+敏感词过滤（`internal/gateway/filter`）→ 有界缓存背压（`queue_size`/`queue_wait_timeout`，满时阻塞入队、超时丢弃并记录错误日志）→ Action 顺序门控（`BeginDispatch`/`FinishDispatch`，分发期间暂存，Action 给出后才放行）→ 专用消费协程串行调用终端处理器
+- 管线从前到后：去重+敏感词过滤（`internal/core/gateway/filter`）→ 有界缓存背压（`queue_size`/`queue_wait_timeout`，满时阻塞入队、超时丢弃并记录错误日志）→ Action 顺序门控（`BeginDispatch`/`FinishDispatch`，分发期间暂存，Action 给出后才放行）→ 专用消费协程串行调用终端处理器
 - `Upload(ctx, platform, event)` / `UploadNotice(ctx, platform, userID, text)` 将 `platformEvent` JSON 序列化后进入管线，不等待处理结果
 - 终端的实现是 `conversation.Sessions.Handle`：解析 `platformEvent` → 按 `channel_id` 路由到会话 → 会话协程内跑 `Agent.Chat` → 用注入的 `ReplyFunc`（`server.SendAction`）把回复写回平台
 
-回复方向由 `internal/agent/conversation.buildReply` 决定：目前只有 QQ 群有下行动作（`send_group_msg`），B 站弹幕没有发送接口、只生成不发送。
+回复方向由 `internal/core/agent/conversation.buildReply` 决定：目前只有 QQ 群有下行动作（`send_group_msg`），B 站弹幕没有发送接口、只生成不发送。
 
 ### 播报链路
 
-事件种类（`platformEvent.event_kind`，见 `internal/shared/event`）同时决定两件事：是否需要 LLM 回复、以及播报优先级（`broadcast.PriorityFor`，SC > 礼物/大航海 > 弹幕与群消息）。
+事件种类（`platformEvent.event_kind`，见 `internal/core/shared/event`）同时决定两件事：是否需要 LLM 回复、以及播报优先级（`broadcast.PriorityFor`，SC > 礼物/大航海 > 弹幕与群消息）。
 
 ```text
 会话回复文本 ──┬─→ ReplyFunc（server.SendAction）→ 原平台
               └─→ Broadcaster.Enqueue ─┐
-POST /inject ─────────────────────────┴─→ 播报队列 ─→ tts.Chain 合成 ─→ Sink.Play
+POST /api/speak ──────────────────────┴─→ 播报队列 ─→ tts.Chain 合成 ─→ Sink.Play
 ```
 
-- 播报有两个入口，共用同一条队列：会话回复（逐句入队）与 `POST /inject`（外部程序注入，`internal/gateway/server` 收下后交给队列）。注入不经过 LLM，文本原样播报，入队即返回；契约见 `docs/INJECT_API.md`。
-- `internal/agent/conversation.Sessions` 只做入队，不等待合成；播报入队失败只记日志，不影响文本回复。
+- 播报有两个入口，共用同一条队列：会话回复（逐句入队）与 `POST /api/speak`（外部程序注入，`internal/backend/api` 收下后交给队列）。注入不经过 LLM，文本原样播报，入队即返回；契约见 `docs/API.md`。
+- `internal/core/agent/conversation.Sessions` 只做入队，不等待合成；播报入队失败只记日志，不影响文本回复。
 - 回复**逐句**入队（`conversation.Splitter`）：流式生成过程中一旦断出完整句子就立刻入队，首字延迟取决于第一句而不是整段回复；首句额外允许在逗号处提前断开（`firstClauseMinLength`）。文本下行仍用完整回复。
 - `tts.Chain` 按 `[tts].engines` 顺序降级，引擎统一返回**裸 PCM16 24kHz 单声道**（无容器头），采样率不一致时在包内重采样。
-- `broadcast.Queue` 需要注入 `Synthesizer`（传 `tts.Chain`）与 `Sink`。配了 `[frontend]` 时 `Sink` 是 `internal/agent/frontend`：把裸 PCM 补上 WAV 头 base64 后推给浏览器，并**等前端回执**（放完才继续下一句）；没配前端时退回 `logSink`，只记录并按时长等待。
-- `[tts].engines` 为空时整个播报链路不装配，会话只做文本下行，`/inject` 返回 503。
+- `broadcast.Queue` 需要注入 `Synthesizer`（传 `tts.Chain`）与 `Sink`。配了 `[frontend]` 时 `Sink` 是 `internal/backend/web`：把裸 PCM 补上 WAV 头 base64 后推给浏览器，并**等前端回执**（放完才继续下一句）；没配前端时退回 `logSink`，只记录并按时长等待。
+- `[tts].engines` 为空时整个播报链路不装配，会话只做文本下行，`/api/speak` 返回 503。
+
+### 接口层（前端调后端）
+
+`internal/backend/api` 是前端唯一的请求-响应入口（契约见 `docs/API.md`），由 `app` 经 `server.Route` 挂上。依赖全部注入：`Config` 是读配置的函数（每次重读磁盘）、`Speak` 是入队函数、`Sessions`/`Queue` 是可选指针——未装配的能力返回 503，而不是假装成功。
+
+| 路径 | 内容 |
+| --- | --- |
+| `GET /api/config` | 配置只读；结构与 `config.toml` 同构，`api_key`/`cookie` 只回 `{"configured": bool}` |
+| `POST /api/speak` | 播报注入（旧路径 `POST /inject` 在过渡期仍可达，指向同一个处理函数） |
+| `GET /api/sessions` | 会话列表：渠道、待处理数、历史条数、最近活跃与最近主动发言时间 |
+| `GET /api/sessions/{id}/history` | 该渠道的历史消息（只回 user/assistant，不回系统提示词） |
+| `POST /api/sessions/{id}/messages` | 以观众身份发消息：走 `upload` 管线，等同平台事件，会落记忆 |
+| `GET /api/status` | 运行状态：接入端在线平台、播报计数、上报管线快照、会话数 |
+
+- **`/api/*` 不鉴权**：暴露面等于 `[server].addr` 的绑定范围；写操作（播报、替观众发消息、第二阶段的推流控制）同样开放，绑 `0.0.0.0` 前先想清楚这一点。
+- 接口层不碰会话内部结构：渠道快照与历史由 `conversation.Sessions` 的 `Channels()` / `History()` 提供，接口层只做脱敏与 JSON 化。
 
 ### 前端接入
 
-`internal/agent/frontend` 是 `broadcast.Sink` 的实现，同时提供三个路由，由 `app` 经 `server.Route` 挂上：
+`internal/backend/web` 是 `broadcast.Sink` 的实现，同时提供三个路由，由 `app` 经 `server.Route` 挂上：
 
 | 路径 | 内容 |
 | --- | --- |
@@ -120,8 +137,8 @@ POST /inject ──────────────────────�
 | `/live2d-models/` | 模型静态资源；`/live2d-models/info` 返回模型清单 |
 
 - 页面挂在 `/web/` 而不是 `/`：接入客户端可以占用根路径（`[[clients]].path`），两者不该抢路由；`server.ProvideServer` 对重复 pattern 会跳过并报错，不会 panic。
-- 表情：模型清单的 `emotionMap` 决定词表，对话侧把回复里的 `[joy]` 标签摘进 `broadcast.Item.Emotion`，前端换成 Live2D 表达式下标；词表定义在 `internal/shared/emotion`。
-- 音频契约：TTS 输出裸 PCM16 24kHz 单声道，由 `internal/agent/frontend` 补 44 字节 WAV 头再 base64——浏览器不吃裸 PCM。
+- 表情：模型清单的 `emotionMap` 决定词表，对话侧把回复里的 `[joy]` 标签摘进 `broadcast.Item.Emotion`，前端换成 Live2D 表达式下标；词表定义在 `internal/core/shared/emotion`。
+- 音频契约：TTS 输出裸 PCM16 24kHz 单声道，由 `internal/backend/web` 补 44 字节 WAV 头再 base64——浏览器不吃裸 PCM。
 
 ### 推流（替代 OBS）
 
@@ -174,7 +191,7 @@ POST /inject ──────────────────────�
 cmd/ internal/            Go 代码（cmd 是唯一非 internal 的包）
 characters/ scripts/e2e/  角色资产与端到端冒烟脚本
 config.toml.example       配置模板；config.toml 与 data/ 是运行时产物，已 gitignore
-docs/                     活契约（CUTOVER / EVENT_CONTRACT / INJECT_API / CLIENT_INTEGRATION / CONFIG_MIGRATION / MEMORY_API）
+docs/                     活契约（API / CUTOVER / EVENT_CONTRACT / INJECT_API / CLIENT_INTEGRATION / CONFIG_MIGRATION / MEMORY_API）
   agents/                 协作流程定义（issue tracker / triage labels / domain docs）
   archive/                已归档文档（go-rewrite effort 与历史设计）
 ```

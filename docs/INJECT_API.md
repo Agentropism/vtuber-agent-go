@@ -2,21 +2,24 @@
 
 ## 1. 概述
 
-`POST /inject` 让外部程序把一段文本交给网关的统一播报队列：网关负责合成语音并按时序投递，前端负责出声、口型与表情。
+> **端点已改名**：`POST /inject` → `POST /api/speak`（过渡期两者并存，路径切换提交里下线旧路径）。
+> 接口总览见 [`docs/API.md`](API.md)，本文只讲播报注入的行为细节。
+
+`POST /api/speak` 让外部程序把一段文本交给网关的统一播报队列：网关负责合成语音并按时序投递，前端负责出声、口型与表情。
 
 它与平台事件是两条不同的入口：
 
 | 入口 | 来源 | 说什么由谁决定 |
 | --- | --- | --- |
 | `upload` 管线（弹幕、礼物、SC、群消息） | 平台客户端上报 | agent（LLM 结合会话上下文生成） |
-| `POST /inject` | 外部程序主动调用 | 调用方，文本原样播报，不经过 LLM |
+| `POST /api/speak` | 外部程序主动调用 | 调用方，文本原样播报，不经过 LLM |
 
 **入队即返回**：响应 `200` 只表示已进入播报队列，不代表已经合成完、更不代表已经播完。播报的排队、抢占、冷却与并行合成统一由 `internal/core/agent/broadcast` 负责，因此事件回复与注入内容不会同时出声。
 
 ## 2. 请求
 
 ```http
-POST /inject HTTP/1.1
+POST /api/speak HTTP/1.1
 Content-Type: application/json
 
 {"text": "要说的话", "emotion": "joy"}
@@ -32,7 +35,7 @@ Content-Type: application/json
 示例：
 
 ```bash
-curl -X POST localhost:6199/inject \
+curl -X POST localhost:6199/api/speak \
   -H 'Content-Type: application/json' \
   -d '{"text":"这是注入的测试播报","emotion":"joy"}'
 ```

@@ -32,19 +32,21 @@ scripts/e2e/run.sh                # 端到端冒烟（真二进制 + 假 LLM/假
 ```text
 cmd/vtuber-agent-go/   入口（单二进制；唯一不在 internal/ 下的包）
 internal/core/          业务与领域能力：shared / config / logger / agent / gateway / tts / stream
-internal/backend/       传输与接入：app（装配）/ server（WS 接入与 Action 写回）/ web（页面与模型托管、播报 Sink）
+internal/backend/       传输与接入：app（装配）/ api（对前端的 REST 接口）/ server（WS 接入与 Action 写回）/ web（页面与模型托管、播报 Sink）
 frontend/               前端工程源码（页面 + libs）；go generate 同步进 internal/backend/web/assets/（产物 gitignore）
 characters/            角色资产（人设 + Live2D 模型映射）
 scripts/e2e/           端到端冒烟脚本
 docs/                  契约文档；docs/archive/ 为归档文档；docs/agents/ 为协作流程定义
+```
 
 模块边界与依赖方向见 [AGENTS.md](AGENTS.md)；对外契约见 `docs/`：
 
 | 文档 | 内容 |
 | --- | --- |
+| [`docs/API.md`](docs/API.md) | 前端接口契约（`/api/config`、`/api/speak`、会话读写、`/api/status`） |
 | [`docs/EVENT_CONTRACT.md`](docs/EVENT_CONTRACT.md) | 事件信封、`platformEvent` 上传格式、事件种类 |
 | [`docs/CLIENT_INTEGRATION.md`](docs/CLIENT_INTEGRATION.md) | 接入客户端如何连上来、上报什么 |
-| [`docs/INJECT_API.md`](docs/INJECT_API.md) | `POST /inject` 播报注入 |
+| [`docs/INJECT_API.md`](docs/INJECT_API.md) | 播报注入的详细行为（端点已改名为 `POST /api/speak`） |
 | [`docs/MEMORY_API.md`](docs/MEMORY_API.md) | 长期记忆文件格式与召回 |
 | [`docs/CONFIG_MIGRATION.md`](docs/CONFIG_MIGRATION.md) | 旧三套配置到 `config.toml` 的逐键映射 |
 | [`docs/CUTOVER.md`](docs/CUTOVER.md) | 切换判据、冒烟、真实联调与回滚预案 |

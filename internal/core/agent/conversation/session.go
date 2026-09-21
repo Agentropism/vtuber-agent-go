@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,7 +34,7 @@ const (
 const (
 	defaultSessionQueue = 16
 	defaultTurnTimeout  = 60 * time.Second
-	channelPrefixGroup  = "group_"
+	channelPrefixGroup  = event.ChannelPrefixGroup
 	eventTypeMessage    = "message"
 )
 
@@ -509,4 +510,57 @@ func buildReply(event InboundEvent, text string) (action.Action, bool) {
 		GroupID: groupID,
 		Message: text,
 	}), true
+}
+
+// ChannelStatus 是单个渠道会话的对外快照，供观测接口展示。
+type ChannelStatus struct {
+	ChannelID  string    `json:"channel_id"`
+	Pending    int       `json:"pending"`     // 待处理事件数（会话队列长度）
+	HistoryLen int       `json:"history_len"` // 历史消息条数
+	LastActive time.Time `json:"last_active,omitempty"`
+	LastIdle   time.Time `json:"last_idle,omitempty"`
+}
+
+// Channels 返回当前所有渠道会话的快照，按渠道号排序。
+func (s *Sessions) Channels() []ChannelStatus {
+	s.mu.Lock()
+	current := make([]*session, 0, len(s.byChannel))
+	for _, item := range s.byChannel {
+		current = append(current, item)
+	}
+	s.mu.Unlock()
+
+	statuses := make([]ChannelStatus, 0, len(current))
+	for _, item := range current {
+		status := ChannelStatus{
+			ChannelID:  item.channel,
+			Pending:    len(item.in),
+			HistoryLen: len(item.agent.History()),
+		}
+		if at := item.lastActive.Load(); at > 0 {
+			status.LastActive = time.Unix(0, at)
+		}
+		if at := item.lastIdle.Load(); at > 0 {
+			status.LastIdle = time.Unix(0, at)
+		}
+		statuses = append(statuses, status)
+	}
+
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].ChannelID < statuses[j].ChannelID })
+
+	return statuses
+}
+
+// History 返回指定渠道的历史消息；该渠道还没有会话时返回 false。
+//
+// 只回可展示的对话：系统提示词含人设细节，不从这里出去。
+func (s *Sessions) History(channelID string) ([]llm.Message, bool) {
+	s.mu.Lock()
+	item, ok := s.byChannel[channelID]
+	s.mu.Unlock()
+	if !ok {
+		return nil, false
+	}
+
+	return item.agent.History(), true
 }

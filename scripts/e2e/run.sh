@@ -107,6 +107,79 @@ echo "==> 跑客户端断言"
 cd "$REPO_DIR"
 SMOKE_ADDR="127.0.0.1:$GW_PORT" go run ./scripts/e2e/client
 
+echo "==> 接口检查（/api/*）"
+API="http://127.0.0.1:$GW_PORT"
+
+api_get() {
+    curl -s --max-time 5 "$API$1"
+}
+
+# 配置只读：结构与 config.toml 同构，密钥只回「是否已配置」
+config_body="$(api_get /api/config)"
+echo "$config_body" | grep -q '"api_key":{"configured":true}' || {
+    echo "/api/config 没有回脱敏后的密钥状态: $config_body" >&2
+    exit 1
+}
+if echo "$config_body" | grep -q '"smoke"'; then
+    echo "/api/config 泄漏了明文密钥" >&2
+    exit 1
+fi
+
+# 运行状态：接入端在线、播报计数、上报管线快照
+status_body="$(api_get /api/status)"
+echo "$status_body" | grep -q '"platforms"' || { echo "/api/status 缺少接入平台: $status_body" >&2; exit 1; }
+echo "$status_body" | grep -q '"broadcast"' || { echo "/api/status 缺少播报计数: $status_body" >&2; exit 1; }
+echo "$status_body" | grep -q '"queue_size"' || { echo "/api/status 缺少上报管线快照: $status_body" >&2; exit 1; }
+
+# 会话列表与历史
+sessions_body="$(api_get /api/sessions)"
+echo "$sessions_body" | grep -q 'room_123456' || { echo "/api/sessions 没有列出渠道: $sessions_body" >&2; exit 1; }
+
+history_body="$(api_get /api/sessions/room_123456/history)"
+echo "$history_body" | grep -q '"messages"' || { echo "/api/sessions/{id}/history 响应异常: $history_body" >&2; exit 1; }
+
+# 播报注入（新路径）
+speak_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "$API/api/speak" \
+    -H 'Content-Type: application/json' -d '{"text":"接口注入冒烟","emotion":"joy"}')"
+if [ "$speak_code" != "200" ]; then
+    echo "/api/speak 状态码 = $speak_code, want 200" >&2
+    exit 1
+fi
+
+# 以观众身份发消息：走与平台事件同一条管线，会进会话、生成回复、落记忆
+send_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "$API/api/sessions/room_123456/messages" \
+    -H 'Content-Type: application/json' -d '{"user_name":"接口冒烟","text":"接口模拟的观众消息"}')"
+if [ "$send_code" != "202" ]; then
+    echo "/api/sessions/{id}/messages 状态码 = $send_code, want 202" >&2
+    exit 1
+fi
+
+for _ in $(seq 1 50); do
+    history_body="$(api_get /api/sessions/room_123456/history)"
+    echo "$history_body" | grep -q '接口模拟的观众消息' && break
+    sleep 0.2
+done
+if ! echo "$history_body" | grep -q '接口模拟的观众消息'; then
+    echo "模拟观众消息没有进会话: $history_body" >&2
+    exit 1
+fi
+
+# 没配过的平台不该被接受（否则会凭空造出幽灵会话）
+bad_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "$API/api/sessions/weibo_1/messages" \
+    -H 'Content-Type: application/json' -d '{"text":"你好"}')"
+if [ "$bad_code" != "400" ]; then
+    echo "未知渠道状态码 = $bad_code, want 400" >&2
+    exit 1
+fi
+
+# 路径切换（第三步）之前，旧路径必须仍然可达
+legacy_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "$API/inject" \
+    -H 'Content-Type: application/json' -d '{"text":"旧路径冒烟"}')"
+if [ "$legacy_code" != "200" ]; then
+    echo "旧路径 /inject 状态码 = $legacy_code, want 200" >&2
+    exit 1
+fi
+
 # 浏览器检查要连正在跑的网关，所以放在这里；环境里没有 playwright 会自动跳过
 if [ -d "$MODELS_DIR" ]; then
     echo "==> 浏览器检查"
@@ -136,6 +209,12 @@ if ! grep -q "工具 memory_search 执行完成" "$WORK_DIR/gateway.log"; then
     exit 1
 fi
 if ! grep -q "播报注入已入队" "$WORK_DIR/gateway.log"; then
+    echo "/inject 与 /api/speak 都没有生效" >&2
+    exit 1
+fi
+if ! grep -q "接口注入冒烟" "$WORK_DIR/gateway.log"; then
+    echo "/api/speak 没有入队" >&2
+    exit 1
     echo "/inject 没有生效" >&2
     exit 1
 fi
