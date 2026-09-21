@@ -6,7 +6,7 @@
 
 事件不再出网：旧版经 WebSocket 上传给远端记忆服务，现在的终端是 `conversation.Sessions.Handle`，属于**进程内异步方法调用**。因此本文描述的是「网关内部的事件信封」，它同时也是对外契约——任何想接替会话层角色的实现，按这个结构解析即可。
 
-相关文档：`docs/INJECT_API.md`（外部注入播报）、`docs/MEMORY_API.md`（记忆 HTTP 接口）、`docs/CONFIG_MIGRATION.md`（配置迁移）。
+相关文档：`docs/API.md`（对前端的 HTTP 接口）、`docs/MEMORY_API.md`（记忆存储格式）、`docs/CLIENT_INTEGRATION.md`（接入端怎么上报）。
 
 ## 2. 生命周期与投递
 

@@ -1,5 +1,10 @@
 # 切换判定与回滚预案
 
+> **已归档（2026-09-21）**：这是从旧系统（Open-LLM-VTuber :12393 / llm-vup-bridge :9528）切到
+> 单二进制前后的判定、冒烟与回滚记录，按当时状态保留，不再维护。
+> 现在的冒烟由 `scripts/e2e/run.sh` 自动跑；对外契约见 `docs/API.md`。
+
+
 ## 1. 现状
 
 | 阶段 | 状态 |
@@ -22,7 +27,7 @@
 | --- | --- | --- | --- |
 | ① | B站弹幕 → 会话 → LLM → TTS → 前端 | 一条弹幕最终在浏览器里出声并显示字幕 | 已用「真二进制 + 假 LLM + 假 TTS + 真 WS 客户端」跑通：弹幕经 `/bilibili` 进入 → 创建 `room_123456` 会话 → 流式回复被切成 2 句 → 逐句入队（priority=danmaku）→ TTS 返回 0.6s PCM → 前端收到 `speak`（WAV base64、24kHz、PCM 编码）→ 回执后队列继续 |
 | ② | QQ 群消息接入与上传 | 群消息进入会话并生成回复，Action 写回 | `go test ./internal/core/agent/conversation/` 覆盖；下行仅 QQ 群有 `send_group_msg` |
-| ③ | `/api/speak` 播报 | `POST /api/speak` 入队并播报 | 见 `docs/INJECT_API.md`；冒烟已验证 200/400/405/503 与表情下标 |
+| ③ | `/api/speak` 播报 | `POST /api/speak` 入队并播报 | 见 `docs/API.md` §2；冒烟已验证 200/400/405/503 与表情下标 |
 | ④ | 统一播报队列 | 优先级、抢占、同级 FIFO、冷却 | `go test -race ./internal/core/agent/broadcast/` |
 | ⑤ | 配置迁移 | 单文件 `config.toml` 覆盖旧三套配置 | 见 `docs/CONFIG_MIGRATION.md` |
 | ⑥ | 前端真实渲染 | 浏览器里能看到 Live2D 角色并听到声音 | 无头 Chromium 实测：PixiJS + Cubism Core 初始化、模型渲染、字幕与音频播放、回执全通 |
@@ -45,7 +50,7 @@ SMOKE_MODELS_DIR=/path/to/live2d-models scripts/e2e/run.sh
 | --- | --- | --- |
 | 1 | 普通弹幕 | 流式回复被切成 2 句，逐句播报（priority=danmaku） |
 | 2 | 触发工具调用的弹幕 | `memory_search` 真的执行、结果回灌、最终答复成句 |
-| 3 |  `POST /api/speak`| 注入播报（priority=proactive）且表情下标正确（joy → 3） |
+| 3 | `POST /api/speak` | 注入播报（priority=proactive）且表情下标正确（joy → 3） |
 | 4 | 静默 2 秒 | 主动发言，最低优先级（priority=idle），任何弹幕都能打断它 |
 
 每条播报都会校验音频是合法的 24kHz 单声道 PCM WAV，并回执 `playback-finished`——队列要等回执

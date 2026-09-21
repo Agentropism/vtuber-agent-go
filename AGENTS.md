@@ -2,38 +2,13 @@
 
 单二进制 VTuber 交互服务：接入 QQ/B站 客户端上报的 OneBot/直播事件，分发到已注册的处理器链，把群消息/弹幕异步交给会话 Agent 生成回复，回复经统一播报队列合成语音后推给内置 Live2D 前端。
 
-**所有的注释和日志都使用中文**
+所有的注释和日志都使用中文
 
 
 ## 模块划分
 
 单 `go.mod`（module `github.com/Agentropism/vtuber-agent-go`）；**除 `cmd/` 外全部包位于 `internal/`**，`internal/` 第一层就是三段边界：`core`（业务与领域能力）/ `backend`（传输与接入）。依赖只能向下：backend → core，core 不知道 backend；反向用函数注入破环（先例 `internal/core/gateway/upload.SetHandler`、`web.Sink`），不引入 DI 容器。这条边界由 `internal/backend/app/boundary_test.go` 强制执行（core 不得反向依赖 backend、不得引入 websocket、源码里不得出现 HTTP 服务端标识符）。
 
-```text
-cmd/vtuber-agent-go/  入口(单二进制;唯一不在 internal/ 下的包)
-internal/core/        业务与领域能力:出站 HTTP 客户端可以有,服务端与 WS 没有
-  shared/             跨模块契约(零内部依赖);`action` 为下行 Action 契约
-  config/ logger/     基础设施
-  agent/              编排层:只认事件与会话,不认平台协议
-    conversation/     会话编排:按 channel_id 的会话管理 + 单会话 Agent(上传管线的终端)
-      llm/            OpenAI 兼容端点的流式客户端(基于 go-openai,无状态)
-    broadcast/        统一播报队列(优先级/抢占/冷却/并行合成),Synthesizer+Sink 注入
-    memory/           长期记忆：追加式 JSON Lines + 关键词（二元组）召回
-    tool/             Tool 注册层
-  gateway/            平台侧的事件与上行能力(不含服务端)
-    event/            平台分发(event.Dispatch)+ onebot/ + bilibililive/(纯数据)
-    upload/           事件上行管线(去重/敏感词 → 背压 → 分发门控),出口由 SetHandler 注入
-    filter/           去重 + 敏感词
-  tts/                云 TTS 引擎(5 家 + failover,不做本地推理);统一输出裸 PCM16 24kHz 单声道
-  stream/             推流层:开播取地址(B站 web 接口)+ Xvfb/Chrome 渲染 + ffmpeg 抓屏混音 → RTMP;由 [stream] 驱动
-internal/backend/     传输与接入:HTTP/WS 服务端、前端资源托管、装配
-  app/                装配:config → logger → 注入 → 注册 handler → 路由
-  api/                对前端的 REST 接口:配置只读、播报注入、会话读写、运行状态(契约见 docs/API.md)
-  server/             WS 接入与 Action 写回(平台侧连接管理)
-  web/                /api/client-ws 协议、Live2D 页面(占根路径)与 /api/models/ 托管、播报 Sink;页面资源 embed 自顶层 frontend/
-frontend/             前端工程源码(页面 + libs);go generate 同步到 internal/backend/web/assets/(产物 gitignore)
-characters/ scripts/ config.toml.example   非 Go 资产,与 Go 包同层
-```
 
 接口归调用方所有:core 定义需要什么,backend 提供实现(如 `web` 的播报 Sink、`server` 的 Action 写回);反向只走 `SetXxxFunc`。
 ## 常用命令
@@ -198,9 +173,9 @@ POST /api/speak ─────────────────────�
 cmd/ internal/            Go 代码（cmd 是唯一非 internal 的包）
 characters/ scripts/e2e/  角色资产与端到端冒烟脚本
 config.toml.example       配置模板；config.toml 与 data/ 是运行时产物，已 gitignore
-docs/                     活契约（API / CUTOVER / EVENT_CONTRACT / INJECT_API / CLIENT_INTEGRATION / CONFIG_MIGRATION / MEMORY_API）
+docs/                     活契约（API / EVENT_CONTRACT / CLIENT_INTEGRATION / MEMORY_API / BILIBILI_INGEST）
   agents/                 协作流程定义（issue tracker / triage labels / domain docs）
-  archive/                已归档文档（go-rewrite effort 与历史设计）
+  archive/                已归档文档（未关闭的 go-rewrite effort + 一次性迁移/切换记录 + 调研稿）
 ```
 
 依赖方向：`app → {gateway, agent, tts} → shared`；`gateway → agent` 单向。

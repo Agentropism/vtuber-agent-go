@@ -1,5 +1,10 @@
 # 配置迁移指南：三套配置 → 单一 config.toml
 
+> **已归档（2026-09-21）**：这是三套配置 → 单 `config.toml` 一次性迁移过程的记录，里面引用的
+> 旧系统（Open-LLM-VTuber / llm-vup-bridge）与文档路径按当时状态保留，不再维护。
+> 当前配置契约见 `config.toml.example` 与 `docs/API.md`。
+
+
 ## 1. 概述
 
 旧系统有三套配置文件，各自的键面互不相识：
@@ -56,7 +61,7 @@ Go 版把三者收敛为 **`config.toml` + `characters/*.toml`**（都在仓库�
 | `tts_config.siliconflow_tts.*` | `[tts.siliconflow_tts]`（`api_url` → `base_url`） |
 | `tts_config.fish_api_tts.*` | `[tts.fish_api_tts]` |
 | `tts_config.minimax_tts.*` | `[tts.minimax_tts]` |
-| — | `[tts].engines = ["edge_tts", "openai_tts"]` | 新增：按序降级 |
+| — | `[tts].engines = ["edge_tts", "openai_tts"]`（新增：按序降级） |
 
 引擎输出统一为**裸 PCM16 24 kHz 单声道**（无容器头），采样率不一致时在包内重采样。
 

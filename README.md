@@ -46,10 +46,11 @@ docs/                  契约文档；docs/archive/ 为归档文档；docs/agent
 | [`docs/API.md`](docs/API.md) | 前端接口契约（`/api/config`、`/api/speak`、会话读写、`/api/status`） |
 | [`docs/EVENT_CONTRACT.md`](docs/EVENT_CONTRACT.md) | 事件信封、`platformEvent` 上传格式、事件种类 |
 | [`docs/CLIENT_INTEGRATION.md`](docs/CLIENT_INTEGRATION.md) | 接入客户端如何连上来、上报什么 |
-| [`docs/INJECT_API.md`](docs/INJECT_API.md) | 播报注入的详细行为（端点已改名为 `POST /api/speak`） |
-| [`docs/MEMORY_API.md`](docs/MEMORY_API.md) | 长期记忆文件格式与召回 |
-| [`docs/CONFIG_MIGRATION.md`](docs/CONFIG_MIGRATION.md) | 旧三套配置到 `config.toml` 的逐键映射 |
-| [`docs/CUTOVER.md`](docs/CUTOVER.md) | 切换判据、冒烟、真实联调与回滚预案 |
+| [`docs/MEMORY_API.md`](docs/MEMORY_API.md) | 长期记忆的存储格式（JSONL + 墓碑）、ID 语义与召回打分 |
+| [`docs/BILIBILI_INGEST.md`](docs/BILIBILI_INGEST.md) | B 站上报端的接入要求与验收清单 |
+
+历史文档（旧配置迁移、切换预案、已完成的改造计划）在 `docs/archive/`；`docs/archive/go-rewrite/artifacts/` 里的
+TTS 引擎与 Live2D 技术栈调研仍可复用。
 
 ## 约定
 
