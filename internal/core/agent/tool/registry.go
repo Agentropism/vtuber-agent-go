@@ -27,6 +27,12 @@ type Registry struct {
 	order    []string
 	defs     map[string]llm.Tool
 	handlers map[string]Handler
+
+	// readonly 标记哪些工具可以被接口层直接调用。
+	//
+	// 默认不可直接调用：工具的副作用只有注册者知道，而接口层不鉴权（见 docs/API.md），
+	// 让「写记忆」这类工具有个开关比默认放开安全。
+	readonly map[string]bool
 }
 
 // New 构造空的注册表。
@@ -34,6 +40,7 @@ func New() *Registry {
 	return &Registry{
 		defs:     make(map[string]llm.Tool),
 		handlers: make(map[string]Handler),
+		readonly: make(map[string]bool),
 	}
 }
 
@@ -56,6 +63,61 @@ func (r *Registry) Register(def llm.Tool, handler Handler) error {
 	r.handlers[def.Name] = handler
 
 	return nil
+}
+
+// RegisterReadOnly 注册只读工具：除模型调用外，也允许接口层直接调用。
+func (r *Registry) RegisterReadOnly(def llm.Tool, handler Handler) error {
+	if err := r.Register(def, handler); err != nil {
+		return err
+	}
+
+	r.mu.Lock()
+	r.readonly[def.Name] = true
+	r.mu.Unlock()
+
+	return nil
+}
+
+// IsReadOnly 报告工具是否只读（可被接口层直接调用）。
+func (r *Registry) IsReadOnly(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.readonly[name]
+}
+
+// Def 返回一个工具的定义，供接口层展示。
+func (r *Registry) Def(name string) (llm.Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	def, ok := r.defs[name]
+
+	return def, ok
+}
+
+// Call 直接执行一次工具调用（接口层用，不经过模型）。
+//
+// 参数格式与模型给的保持一致：非法 JSON 当作空对象，与 runOne 的行为对齐。
+func (r *Registry) Call(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	r.mu.RLock()
+	handler := r.handlers[name]
+	r.mu.RUnlock()
+
+	if handler == nil {
+		return "", fmt.Errorf("tool: 未注册的工具 %s", name)
+	}
+
+	if len(args) == 0 || !json.Valid(args) {
+		args = json.RawMessage("{}")
+	}
+
+	result, err := handler(ctx, args)
+	if err != nil {
+		return "", fmt.Errorf("工具 %s 执行失败: %w", name, err)
+	}
+
+	return result, nil
 }
 
 // Tools 返回按注册顺序排列的工具定义，交给模型声明。

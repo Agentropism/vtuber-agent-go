@@ -14,10 +14,6 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/core/shared/emotion"
 )
 
-// modelsPrefix 是模型资源的挂载前缀。挂载点是网关自己的事——外部 model_dict.json
-// 里的 URL 带着它自己的前缀（原项目是 /live2d-models/），读进来必须换成这个值。
-const modelsPrefix = "/api/models"
-
 // modelEntry 是模型清单里的一项，字段对齐原项目根的 model_dict.json。
 type modelEntry struct {
 	Name       string            `json:"name"`

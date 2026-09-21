@@ -105,6 +105,8 @@ func Initialize() (*App, error) {
 		Config:   config.ProvideConfig,
 		Speak:    speak,
 		Sessions: sessions,
+		Memory:   store,
+		Tools:    registry,
 		Queue:    queue,
 		Clients:  server.ConnectedPlatforms,
 		Upload:   upload.Stats,

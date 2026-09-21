@@ -148,7 +148,93 @@ GET /api/status
 
 未装配的子系统对应字段直接不出现（例如没配 TTS 就没有 `broadcast`），而不是回 0 让人误以为可用。
 
-## 5. 路径迁移（已完成）
+## 5. 记忆读写
+
+长期记忆是追加式 JSON Lines 文件（格式见 [`docs/MEMORY_API.md`](MEMORY_API.md)）；未配置
+`[agent].memory_file` 时这一组接口返回 `503`。`id` 是记录在文件中的**行号**，追加式存储里稳定。
+
+### 5.1 查询
+
+```http
+GET /api/memory?query=草莓&limit=5
+```
+
+带 `query` 时按关键词召回（打分规则见 MEMORY_API.md），不带时回最近若干条快照；
+`limit` 缺省为召回 5 条 / 快照 20 条。
+
+```json
+{
+  "count": 1,
+  "total": 12,
+  "entries": [
+    {"id": 3, "time": "2026-09-21T11:13:49Z", "channel_id": "room_123456", "user": "观众甲", "text": "我说过喜欢草莓", "reply": "记住啦", "weight": 1}
+  ]
+}
+```
+
+### 5.2 新增
+
+```http
+POST /api/memory
+{"channel_id": "room_123456", "user": "观众甲", "text": "我说过喜欢草莓", "reply": "记住啦", "weight": 1}
+```
+
+| 状态码 | 响应体 | 含义 |
+| --- | --- | --- |
+| 201 | `{"id": 3}` | 已写入并落盘 |
+| 400 | `{"error":"empty text"}` | `text` 为空 |
+| 503 | `{"error":"memory disabled"}` | 未配置记忆文件 |
+
+### 5.3 删除
+
+```http
+DELETE /api/memory/3
+```
+
+写一条墓碑记录（文件只增不重写），读取与召回时过滤。
+
+| 状态码 | 响应体 | 含义 |
+| --- | --- | --- |
+| 200 | `{"status":"deleted","id":3}` | 已标记删除 |
+| 400 | `{"error":"invalid memory id"}` | ID 不是正整数 |
+| 404 | `{"error":"记忆 3 不存在"}` | 没有这条记录（含重复删除） |
+
+## 6. 工具
+
+未开启 `[agent].enable_tools` 时返回 `503`。
+
+### 6.1 列清单
+
+```http
+GET /api/tools
+```
+
+```json
+{"count": 2, "tools": [{"name": "memory_search", "description": "...", "parameters": {"type": "object"}, "read_only": true}]}
+```
+
+`read_only` 由注册处决定：只有标记为只读的工具才允许直接调用（见下）。
+
+### 6.2 直接调用
+
+```http
+POST /api/tools/memory_search
+{"args": {"query": "草莓", "limit": 3}}
+```
+
+`args` 与模型给的参数同构，直接喂给工具处理器；执行结果原样返回。
+
+| 状态码 | 响应体 | 含义 |
+| --- | --- | --- |
+| 200 | `{"name":"memory_search","result":"..."}` | 执行完成 |
+| 403 | `{"error":"tool has side effects and is not directly callable"}` | 该工具没标记为只读 |
+| 404 | `{"error":"unknown tool: x"}` | 工具未注册 |
+| 500 | `{"error":"..."}` | 工具自身报错 |
+
+**为什么有副作用就拒绝**：`/api/*` 不鉴权，把「写记忆」这类工具开给局域网等于把数据面也开了。
+要放开得在注册处显式标记只读（`tool.Registry.RegisterReadOnly`），是个有意识动作。
+
+## 7. 路径迁移（已完成）
 
 | 旧路径 | 现在 | 说明 |
 | --- | --- | --- |

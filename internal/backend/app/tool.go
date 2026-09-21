@@ -35,11 +35,13 @@ func provideTools(
 	registry := tool.New()
 
 	if store != nil {
-		if err := registry.Register(memorySearchTool(), memorySearchHandler(store)); err != nil {
+		// 两个内置工具都只读（检索记忆、查状态），登记为可直接调用：
+		// 接口层只放行只读工具，写记忆这类有副作用的工具不在此列。
+		if err := registry.RegisterReadOnly(memorySearchTool(), memorySearchHandler(store)); err != nil {
 			logger.Warnf("注册记忆检索工具失败: %v", err)
 		}
 	}
-	if err := registry.Register(statusTool(), statusHandler(front, queue, started)); err != nil {
+	if err := registry.RegisterReadOnly(statusTool(), statusHandler(front, queue, started)); err != nil {
 		logger.Warnf("注册状态查询工具失败: %v", err)
 	}
 

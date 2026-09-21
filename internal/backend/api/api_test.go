@@ -1,15 +1,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/server"
+	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/conversation/llm"
+	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/memory"
+	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/tool"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/config"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/gateway/upload"
 )
@@ -269,5 +274,134 @@ func TestChannelBinding(t *testing.T) {
 				t.Fatalf("binding = (%q, %q), want (%q, %q)", platform, channelType, tc.wantPlat, tc.wantChannel)
 			}
 		})
+	}
+}
+
+// 记忆接口：追加、按关键词召回、最近快照、墓碑删除。
+func TestMemoryEndpoints(t *testing.T) {
+	store, err := memory.Open(filepath.Join(t.TempDir(), "memory.jsonl"))
+	if err != nil {
+		t.Fatalf("打开记忆: %v", err)
+	}
+	defer store.Close()
+
+	handler := &Handler{Memory: store}
+
+	// 追加
+	recorder := httptest.NewRecorder()
+	handler.handleMemoryAdd(recorder, newRequest(http.MethodPost, "/api/memory", `{"text":"  记得买牛奶  ","user":"观众"}`))
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("追加状态码 = %d, want 201", recorder.Code)
+	}
+	var added struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &added); err != nil {
+		t.Fatalf("解析追加响应: %v", err)
+	}
+	if added.ID != 1 {
+		t.Fatalf("第一条记忆的 ID = %d, want 1", added.ID)
+	}
+
+	// 最近快照（不带 query）
+	recorder = httptest.NewRecorder()
+	handler.handleMemoryList(recorder, newRequest(http.MethodGet, "/api/memory", ""))
+	if !strings.Contains(recorder.Body.String(), "记得买牛奶") {
+		t.Fatalf("快照里没有刚写入的记忆: %s", recorder.Body.String())
+	}
+
+	// 按关键词召回
+	recorder = httptest.NewRecorder()
+	handler.handleMemoryList(recorder, newRequest(http.MethodGet, "/api/memory?query=牛奶", ""))
+	if !strings.Contains(recorder.Body.String(), "记得买牛奶") {
+		t.Fatalf("召回没有命中: %s", recorder.Body.String())
+	}
+
+	// 空文本与非法 ID
+	recorder = httptest.NewRecorder()
+	handler.handleMemoryAdd(recorder, newRequest(http.MethodPost, "/api/memory", `{"text":"   "}`))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("空文本状态码 = %d, want 400", recorder.Code)
+	}
+
+	// 墓碑删除
+	recorder = httptest.NewRecorder()
+	deleteReq := newRequest(http.MethodDelete, "/api/memory/1", "")
+	deleteReq.SetPathValue("id", "1")
+	handler.handleMemoryDelete(recorder, deleteReq)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("删除状态码 = %d, want 200", recorder.Code)
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.handleMemoryList(recorder, newRequest(http.MethodGet, "/api/memory", ""))
+	if strings.Contains(recorder.Body.String(), "记得买牛奶") {
+		t.Fatalf("删除后仍能列出该条: %s", recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	deleteReq = newRequest(http.MethodDelete, "/api/memory/1", "")
+	deleteReq.SetPathValue("id", "1")
+	handler.handleMemoryDelete(recorder, deleteReq)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("重复删除状态码 = %d, want 404", recorder.Code)
+	}
+
+	// 未配置记忆
+	empty := &Handler{}
+	recorder = httptest.NewRecorder()
+	empty.handleMemoryList(recorder, newRequest(http.MethodGet, "/api/memory", ""))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("未配置记忆状态码 = %d, want 503", recorder.Code)
+	}
+}
+
+// 工具接口：列清单，且只放行只读工具的直接调用。
+func TestToolEndpoints(t *testing.T) {
+	registry := tool.New()
+	noop := func(context.Context, json.RawMessage) (string, error) { return "结果", nil }
+
+	if err := registry.RegisterReadOnly(llm.Tool{Name: "peek", Description: "只读工具"}, noop); err != nil {
+		t.Fatalf("注册只读工具: %v", err)
+	}
+	if err := registry.Register(llm.Tool{Name: "write", Description: "有副作用的工具"}, noop); err != nil {
+		t.Fatalf("注册有副作用的工具: %v", err)
+	}
+
+	handler := &Handler{Tools: registry}
+
+	// 清单：两个工具，只读标记要如实反映
+	recorder := httptest.NewRecorder()
+	handler.handleToolsList(recorder, newRequest(http.MethodGet, "/api/tools", ""))
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"read_only":true`) || !strings.Contains(body, `"read_only":false`) {
+		t.Fatalf("工具清单的只读标记不对: %s", body)
+	}
+
+	// 只读工具可直接调用
+	recorder = httptest.NewRecorder()
+	callReq := newRequest(http.MethodPost, "/api/tools/peek", `{"args":{"query":"x"}}`)
+	callReq.SetPathValue("name", "peek")
+	handler.handleToolCall(recorder, callReq)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "结果") {
+		t.Fatalf("只读工具调用 = %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	// 有副作用的工具必须被拒
+	recorder = httptest.NewRecorder()
+	callReq = newRequest(http.MethodPost, "/api/tools/write", `{"args":{}}`)
+	callReq.SetPathValue("name", "write")
+	handler.handleToolCall(recorder, callReq)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("有副作用的工具状态码 = %d, want 403", recorder.Code)
+	}
+
+	// 未注册的工具
+	recorder = httptest.NewRecorder()
+	callReq = newRequest(http.MethodPost, "/api/tools/nope", `{}`)
+	callReq.SetPathValue("name", "nope")
+	handler.handleToolCall(recorder, callReq)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("未注册工具状态码 = %d, want 404", recorder.Code)
 	}
 }

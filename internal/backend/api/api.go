@@ -13,6 +13,8 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/server"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/broadcast"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/conversation"
+	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/memory"
+	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/tool"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/config"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/gateway/upload"
 
@@ -27,6 +29,10 @@ type Handler struct {
 	Speak func(text, emotion string) error
 	// Sessions 是会话层；nil 表示未配置 [llm]，此时没有会话可读也没有终端处理器。
 	Sessions *conversation.Sessions
+	// Memory 是长期记忆；nil 表示未配置 [agent].memory_file。
+	Memory *memory.Store
+	// Tools 是工具注册表；nil 表示未开启 [agent].enable_tools。
+	Tools *tool.Registry
 	// Queue 提供播报队列计数；nil 表示播报链路未装配。
 	Queue *broadcast.Queue
 	// Clients 返回在线接入平台；nil 表示取不到。
@@ -48,6 +54,11 @@ func (h *Handler) Routes() []server.Route {
 		{Pattern: "GET /api/sessions/{id}/history", Handler: http.HandlerFunc(h.handleHistory)},
 		{Pattern: "POST /api/sessions/{id}/messages", Handler: http.HandlerFunc(h.handleSendMessage)},
 		{Pattern: "GET /api/status", Handler: http.HandlerFunc(h.handleStatus)},
+		{Pattern: "GET /api/memory", Handler: http.HandlerFunc(h.handleMemoryList)},
+		{Pattern: "POST /api/memory", Handler: http.HandlerFunc(h.handleMemoryAdd)},
+		{Pattern: "DELETE /api/memory/{id}", Handler: http.HandlerFunc(h.handleMemoryDelete)},
+		{Pattern: "GET /api/tools", Handler: http.HandlerFunc(h.handleToolsList)},
+		{Pattern: "POST /api/tools/{name}", Handler: http.HandlerFunc(h.handleToolCall)},
 	}
 }
 

@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,7 +51,7 @@ func TestAppendAndRecall(t *testing.T) {
 		{ChannelID: "room_2", User: "丙", Text: "游戏区的主播真多", Reply: "是呀"},
 	}
 	for _, entry := range entries {
-		if err := store.Append(entry); err != nil {
+		if _, err := store.Append(entry); err != nil {
 			t.Fatalf("写入: %v", err)
 		}
 	}
@@ -82,8 +83,8 @@ func TestRecallPrefersHeavierWeight(t *testing.T) {
 	}
 	defer store.Close()
 
-	_ = store.Append(Entry{Text: "提到了拉面", Reply: "普通弹幕", Weight: 1})
-	_ = store.Append(Entry{Text: "提到了拉面", Reply: "醒目留言", Weight: 5})
+	_, _ = store.Append(Entry{Text: "提到了拉面", Reply: "普通弹幕", Weight: 1})
+	_, _ = store.Append(Entry{Text: "提到了拉面", Reply: "醒目留言", Weight: 5})
 
 	hits := store.Recall("拉面", 5)
 	if len(hits) != 2 {
@@ -102,7 +103,7 @@ func TestStoreReloadsFromDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("打开记忆: %v", err)
 	}
-	if err := first.Append(Entry{Text: "记住我说过的话", Reply: "好的"}); err != nil {
+	if _, err := first.Append(Entry{Text: "记住我说过的话", Reply: "好的"}); err != nil {
 		t.Fatalf("写入: %v", err)
 	}
 	if err := first.Close(); err != nil {
@@ -153,7 +154,7 @@ func TestRecallLimit(t *testing.T) {
 	defer store.Close()
 
 	for i := 0; i < 10; i++ {
-		_ = store.Append(Entry{Text: "重复的话题", Reply: "回复", Time: time.Now().Add(time.Duration(i) * time.Minute)})
+		_, _ = store.Append(Entry{Text: "重复的话题", Reply: "回复", Time: time.Now().Add(time.Duration(i) * time.Minute)})
 	}
 
 	if hits := store.Recall("话题", 3); len(hits) != 3 {
@@ -161,5 +162,68 @@ func TestRecallLimit(t *testing.T) {
 	}
 	if hits := store.Recall("话题", 0); len(hits) != defaultRecallLimit {
 		t.Fatalf("默认召回 %d 条, want %d", len(hits), defaultRecallLimit)
+	}
+}
+
+// 删除写墓碑、读取时过滤：重开文件后结果必须一致（这是「文件只增不重写」的代价所在）。
+func TestDeleteWritesTombstoneAndSurvivesReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memory.jsonl")
+
+	store, err := Open(path)
+	if err != nil {
+		t.Fatalf("打开记忆: %v", err)
+	}
+
+	first, err := store.Append(Entry{Text: "第一条", Reply: "好的"})
+	if err != nil {
+		t.Fatalf("写入第一条: %v", err)
+	}
+	second, err := store.Append(Entry{Text: "第二条", Reply: "嗯"})
+	if err != nil {
+		t.Fatalf("写入第二条: %v", err)
+	}
+	if first == second {
+		t.Fatalf("两条记录的 ID 相同: %d", first)
+	}
+
+	if err := store.Delete(second); err != nil {
+		t.Fatalf("删除: %v", err)
+	}
+	if got := store.Len(); got != 1 {
+		t.Fatalf("删除后条数 = %d, want 1", got)
+	}
+	if hits := store.Recall("第二条", 5); len(hits) != 0 {
+		t.Fatalf("被删除的记录仍能被召回: %#v", hits)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("关闭: %v", err)
+	}
+
+	// 墓碑必须落盘：重开后仍然是删掉的状态，且存活记录的 ID 不变
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读文件: %v", err)
+	}
+	if !strings.Contains(string(raw), `"op":"delete"`) {
+		t.Fatalf("文件里没有墓碑记录:\n%s", raw)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("重新打开: %v", err)
+	}
+	defer reopened.Close()
+
+	if got := reopened.Len(); got != 1 {
+		t.Fatalf("重开后条数 = %d, want 1", got)
+	}
+	snapshot := reopened.Snapshot(10)
+	if len(snapshot) != 1 || snapshot[0].ID != first {
+		t.Fatalf("重开后快照 = %#v, want 仅 ID=%d 的那条", snapshot, first)
+	}
+
+	// 删除不存在的 ID 要报错，而不是静默成功
+	if err := reopened.Delete(9999); err == nil {
+		t.Fatal("删除不存在的 ID 应该报错")
 	}
 }

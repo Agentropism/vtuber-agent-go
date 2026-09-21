@@ -32,12 +32,41 @@ type Entry struct {
 	Weight int `json:"weight"`
 }
 
+// EntryWithID 是带 ID 的记忆条目：接口层按 ID 删除，ID 即文件行号。
+//
+// 内嵌 Entry，JSON 上是平铺的字段加一个 id。
+type EntryWithID struct {
+	ID int `json:"id"`
+	Entry
+}
+
+// recordLine 是文件里一行的原始形态：要么是一条记忆，要么是一条删除标记。
+type recordLine struct {
+	Op string `json:"op"`
+	ID int    `json:"id"`
+	Entry
+}
+
+// opDelete 是删除标记的 op 取值。
+const opDelete = "delete"
+
+// record 是内存里的一条记忆：条目 + 它在文件中的行号。
+//
+// 行号即对外 ID：追加式文件里行号稳定（只追加、不重写），接口层靠它删除。
+type record struct {
+	id    int
+	entry Entry
+}
+
 // Store 是记忆存储。
 type Store struct {
 	mu      sync.RWMutex
 	path    string
 	file    *os.File
-	entries []Entry
+	entries []record
+
+	// nextID 是下一条记录的行号。
+	nextID int
 
 	// inverted 是词元到条目下标的倒排索引。
 	inverted map[string][]int
@@ -52,7 +81,9 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("创建记忆目录: %w", err)
 	}
 
-	store := &Store{path: path, inverted: make(map[string][]int)}
+	// ID 就是文件行号，从 1 起：空文件（或首次创建）时 nextID 必须是 1，
+	// 否则内存里的 ID 会与重开后按行号算出的 ID 错位，墓碑就删错条目了
+	store := &Store{path: path, inverted: make(map[string][]int), nextID: 1}
 	if err := store.load(); err != nil {
 		return nil, err
 	}
@@ -79,30 +110,55 @@ func (s *Store) load() error {
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+
+	lineNo := 0
+	records := make([]record, 0, 64)
+	deleted := make(map[int]bool)
+
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
 		}
+		lineNo++
 
-		var entry Entry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		var raw recordLine
+		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			// 单行坏了不影响其余记录，跳过并继续
 			continue
 		}
-		s.index(entry)
+		if raw.Op == opDelete {
+			// 墓碑可能出现在被删记录之后，所以删除先收集、最后统一过滤
+			deleted[raw.ID] = true
+			continue
+		}
+
+		records = append(records, record{id: lineNo, entry: raw.Entry})
+	}
+	if err := scanner.Err(); err != nil {
+		return err
 	}
 
-	return scanner.Err()
+	s.nextID = lineNo + 1
+	for _, item := range records {
+		if deleted[item.id] {
+			continue
+		}
+		s.appendRecord(item)
+	}
+
+	return nil
 }
 
-// index 把一条记录加入内存与倒排索引；调用方需持有写锁或处于初始化阶段。
-func (s *Store) index(entry Entry) {
+// appendRecord 把一条记录加入内存，并把它的词元挂到倒排索引尾部。
+//
+// 调用方需持有写锁或处于初始化阶段。只追加，因此索引位置就是切片下标。
+func (s *Store) appendRecord(item record) {
 	position := len(s.entries)
-	s.entries = append(s.entries, entry)
+	s.entries = append(s.entries, item)
 
 	seen := make(map[string]bool)
-	for _, token := range Tokenize(entry.Text + " " + entry.Reply) {
+	for _, token := range Tokenize(item.entry.Text + " " + item.entry.Reply) {
 		if seen[token] {
 			continue
 		}
@@ -111,8 +167,27 @@ func (s *Store) index(entry Entry) {
 	}
 }
 
-// Append 追加一条记忆，并落盘。
-func (s *Store) Append(entry Entry) error {
+// rebuildIndex 按当前条目重建倒排索引。
+//
+// 删除会改变下标，逐条挪索引比重建更容易出错（ponytail: O(n) 重建，删除是低频操作，
+// 真到毫秒级瓶颈再谈增量维护）。
+func (s *Store) rebuildIndex() {
+	s.inverted = make(map[string][]int)
+
+	for position, item := range s.entries {
+		seen := make(map[string]bool)
+		for _, token := range Tokenize(item.entry.Text + " " + item.entry.Reply) {
+			if seen[token] {
+				continue
+			}
+			seen[token] = true
+			s.inverted[token] = append(s.inverted[token], position)
+		}
+	}
+}
+
+// Append 追加一条记忆，并落盘；返回它的 ID（文件行号）。
+func (s *Store) Append(entry Entry) (int, error) {
 	if entry.Time.IsZero() {
 		entry.Time = time.Now()
 	}
@@ -122,24 +197,95 @@ func (s *Store) Append(entry Entry) error {
 
 	payload, err := json.Marshal(entry)
 	if err != nil {
-		return fmt.Errorf("序列化记忆: %w", err)
+		return 0, fmt.Errorf("序列化记忆: %w", err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, err := s.file.Write(append(payload, '\n')); err != nil {
-		return fmt.Errorf("写入记忆: %w", err)
+	if s.file == nil {
+		return 0, fmt.Errorf("记忆文件已关闭")
 	}
-	s.index(entry)
+
+	// 先写盘再进内存：写失败时内存里不该出现一条磁盘上没有的记录
+	if _, err := s.file.Write(append(payload, '\n')); err != nil {
+		return 0, fmt.Errorf("写入记忆: %w", err)
+	}
+
+	id := s.nextID
+	s.nextID++
+	s.appendRecord(record{id: id, entry: entry})
+
+	return id, nil
+}
+
+// Delete 删除一条记忆：追加一条墓碑记录，读取时据此过滤。
+//
+// 为什么不是重写文件：追加式存储的重写要写锁 + 临时文件原子替换，中途崩溃还要能回滚；
+// 删除是低频操作，墓碑更简单，也留下了「什么时候删了哪条」的痕迹。代价是文件只增不减。
+func (s *Store) Delete(id int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.file == nil {
+		return fmt.Errorf("记忆文件已关闭")
+	}
+
+	position := -1
+	for i, item := range s.entries {
+		if item.id == id {
+			position = i
+			break
+		}
+	}
+	if position < 0 {
+		return fmt.Errorf("记忆 %d 不存在", id)
+	}
+
+	payload, err := json.Marshal(recordLine{Op: opDelete, ID: id})
+	if err != nil {
+		return fmt.Errorf("序列化删除标记: %w", err)
+	}
+	if _, err := s.file.Write(append(payload, '\n')); err != nil {
+		return fmt.Errorf("写入删除标记: %w", err)
+	}
+
+	s.entries = append(s.entries[:position], s.entries[position+1:]...)
+	s.rebuildIndex()
 
 	return nil
+}
+
+// Snapshot 返回最近的 limit 条记忆（新的在前，limit<=0 时取 20），带 ID 供接口层删除。
+func (s *Store) Snapshot(limit int) []EntryWithID {
+	if limit <= 0 {
+		limit = defaultRecentLimit
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.entries) == 0 {
+		return nil
+	}
+
+	start := len(s.entries) - limit
+	if start < 0 {
+		start = 0
+	}
+
+	out := make([]EntryWithID, 0, len(s.entries)-start)
+	for i := len(s.entries) - 1; i >= start; i-- {
+		out = append(out, EntryWithID{ID: s.entries[i].id, Entry: s.entries[i].entry})
+	}
+
+	return out
 }
 
 // Recall 按关键词召回相关记忆，最多返回 limit 条（limit<=0 时取 5）。
 //
 // 打分 = 命中的词元数 × 权重系数 ÷ 时间衰减；同分按时间倒序。
-func (s *Store) Recall(query string, limit int) []Entry {
+func (s *Store) Recall(query string, limit int) []EntryWithID {
 	if limit <= 0 {
 		limit = defaultRecallLimit
 	}
@@ -168,23 +314,24 @@ func (s *Store) Recall(query string, limit int) []Entry {
 	}
 	ranked := make([]scored, 0, len(scores))
 	for position, hits := range scores {
-		entry := s.entries[position]
+		entry := s.entries[position].entry
 		ranked = append(ranked, scored{position: position, score: hits * weightFactor(entry.Weight) * recencyFactor(entry.Time)})
 	}
 	sort.Slice(ranked, func(i, j int) bool {
 		if ranked[i].score != ranked[j].score {
 			return ranked[i].score > ranked[j].score
 		}
-		return s.entries[ranked[i].position].Time.After(s.entries[ranked[j].position].Time)
+		return s.entries[ranked[i].position].entry.Time.After(s.entries[ranked[j].position].entry.Time)
 	})
 
 	if len(ranked) > limit {
 		ranked = ranked[:limit]
 	}
 
-	out := make([]Entry, 0, len(ranked))
+	out := make([]EntryWithID, 0, len(ranked))
 	for _, item := range ranked {
-		out = append(out, s.entries[item.position])
+		record := s.entries[item.position]
+		out = append(out, EntryWithID{ID: record.id, Entry: record.entry})
 	}
 
 	return out
@@ -211,6 +358,9 @@ func (s *Store) Close() error {
 
 	return err
 }
+
+// defaultRecentLimit 是不带检索词时的返回条数。
+const defaultRecentLimit = 20
 
 const (
 	// defaultRecallLimit 是未指定条数时召回几条。

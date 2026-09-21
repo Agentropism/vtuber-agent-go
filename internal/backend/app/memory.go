@@ -35,7 +35,7 @@ func (m memoryAdapter) Recall(query string, limit int) []conversation.MemoryEntr
 }
 
 func (m memoryAdapter) Remember(entry conversation.MemoryEntry) {
-	if err := m.store.Append(memory.Entry{
+	if _, err := m.store.Append(memory.Entry{
 		Time:      entry.Time,
 		ChannelID: entry.ChannelID,
 		User:      entry.User,

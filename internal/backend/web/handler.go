@@ -128,6 +128,11 @@ func (f *Frontend) ClientWSHandler() http.Handler {
 	})
 }
 
+// modelsPrefix 是模型资源的挂载前缀，跨 handler 与清单解析共用这一个定义。
+// 挂载点是网关自己的事：外部 model_dict.json 里的 URL 带着原项目的前缀（/live2d-models/），
+// 读进来必须换成这里的值，否则页面会去请求一个本服务没有的路径。
+const modelsPrefix = "/api/models"
+
 // ModelsHandler 处理 /api/models/：/info 返回清单，其余按静态文件返回。
 func (f *Frontend) ModelsHandler() http.Handler {
 	fileServer := http.StripPrefix(modelsPrefix+"/", http.FileServer(http.Dir(f.cfg.ModelsDir)))
