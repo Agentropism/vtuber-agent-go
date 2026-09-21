@@ -21,9 +21,9 @@
 | # | 项目 | 判据 | 验证方式 |
 | --- | --- | --- | --- |
 | ① | B站弹幕 → 会话 → LLM → TTS → 前端 | 一条弹幕最终在浏览器里出声并显示字幕 | 已用「真二进制 + 假 LLM + 假 TTS + 真 WS 客户端」跑通：弹幕经 `/bilibili` 进入 → 创建 `room_123456` 会话 → 流式回复被切成 2 句 → 逐句入队（priority=danmaku）→ TTS 返回 0.6s PCM → 前端收到 `speak`（WAV base64、24kHz、PCM 编码）→ 回执后队列继续 |
-| ② | QQ 群消息接入与上传 | 群消息进入会话并生成回复，Action 写回 | `go test ./internal/agent/conversation/` 覆盖；下行仅 QQ 群有 `send_group_msg` |
+| ② | QQ 群消息接入与上传 | 群消息进入会话并生成回复，Action 写回 | `go test ./internal/core/agent/conversation/` 覆盖；下行仅 QQ 群有 `send_group_msg` |
 | ③ | `/inject` 播报 | `POST /inject` 入队并播报 | 见 `docs/INJECT_API.md`；冒烟已验证 200/400/405/503 与表情下标 |
-| ④ | 统一播报队列 | 优先级、抢占、同级 FIFO、冷却 | `go test -race ./internal/agent/broadcast/` |
+| ④ | 统一播报队列 | 优先级、抢占、同级 FIFO、冷却 | `go test -race ./internal/core/agent/broadcast/` |
 | ⑤ | 配置迁移 | 单文件 `config.toml` 覆盖旧三套配置 | 见 `docs/CONFIG_MIGRATION.md` |
 | ⑥ | 前端真实渲染 | 浏览器里能看到 Live2D 角色并听到声音 | 无头 Chromium 实测：PixiJS + Cubism Core 初始化、模型渲染、字幕与音频播放、回执全通 |
 
@@ -116,7 +116,7 @@ Go 版与旧系统的数据面互不依赖（不共用数据库、不共用配�
 | --- | --- |
 | ASR / VAD | 整包不做（直播场景没有麦克风输入源），旧配置对应键面已删除 |
 | 本地推理引擎 | 全部不做（含 sherpa，避免 CGo）；TTS 只保留 5 家云引擎 |
-| 旧前端的 21 种消息 | 不复刻；自研页面只认 2 种下行与 2 种上行，见 `internal/agent/frontend/doc.go` |
+| 旧前端的 21 种消息 | 不复刻；自研页面只认 2 种下行与 2 种上行，见 `internal/backend/web/doc.go` |
 | 翻译预处理 | 未实现（`tts_preprocessor_config` 一系键面已删除） |
 | `[memory].target` | 已删除：事件终端改为进程内调用，不再有远端 WebSocket |
-| 记忆存储 | 由 SQLite 改为追加式 JSON Lines，理由见 `internal/agent/memory/memory.go` 包注释 |
+| 记忆存储 | 由 SQLite 改为追加式 JSON Lines，理由见 `internal/core/agent/memory/memory.go` 包注释 |

@@ -3,14 +3,17 @@
 实时语音交互 VTuber 的单二进制 Go 实现：接入 QQ / B站 事件 → 会话与 LLM → 统一播报队列 → 云 TTS → 内置 Live2D 前端。
 
 ```text
-QQ 适配端 ─┐                                    ┌→ 文本回复写回原平台
-           ├→ internal/gateway → internal/agent ─┤
-B站 长连接 ─┘   (分发/去重/上行管线)   (会话/LLM)  └→ 播报队列 → internal/tts → 前端出声
+QQ 适配端 ─┐                                      ┌→ 文本回复写回原平台
+           ├→ core/gateway → core/agent ─────────┤
+B站 长连接 ─┘   (分发/去重/上行管线)   (会话/LLM)  └→ 播报队列 → core/tts → backend/web → 前端出声
+
+core（业务与领域能力，不认 HTTP/WS）与 backend（接入、API、前端资源、装配）分层的理由与强制手段见 AGENTS.md。
 ```
 
 ## 快速开始
 
 ```bash
+go generate ./...                  # 同步 frontend/ 的前端资源进 embed 包（改过页面必跑）
 go build ./cmd/vtuber-agent-go/   # 编译
 cp config.toml.example config.toml # 配置（含凭据，不进版本控制）
 ./vtuber-agent-go                 # 运行；config.toml 与 characters/ 需在当前目录
@@ -20,7 +23,7 @@ xdg-open http://127.0.0.1:6199/web/
 验证：
 
 ```bash
-gofmt -l . && go build ./... && go vet ./... && go test ./...
+go generate ./... && gofmt -l . && go build ./... && go vet ./... && go test ./...
 scripts/e2e/run.sh                # 端到端冒烟（真二进制 + 假 LLM/假 TTS + 真 WS 客户端，不需要真实凭据）
 ```
 
@@ -28,11 +31,12 @@ scripts/e2e/run.sh                # 端到端冒烟（真二进制 + 假 LLM/假
 
 ```text
 cmd/vtuber-agent-go/   入口（单二进制；唯一不在 internal/ 下的包）
-internal/              app / gateway / agent / tts / stream / shared / config / logger
+internal/core/          业务与领域能力：shared / config / logger / agent / gateway / tts / stream
+internal/backend/       传输与接入：app（装配）/ server（WS 接入与 Action 写回）/ web（页面与模型托管、播报 Sink）
+frontend/               前端工程源码（页面 + libs）；go generate 同步进 internal/backend/web/assets/（产物 gitignore）
 characters/            角色资产（人设 + Live2D 模型映射）
 scripts/e2e/           端到端冒烟脚本
 docs/                  契约文档；docs/archive/ 为归档文档；docs/agents/ 为协作流程定义
-```
 
 模块边界与依赖方向见 [AGENTS.md](AGENTS.md)；对外契约见 `docs/`：
 
@@ -48,8 +52,8 @@ docs/                  契约文档；docs/archive/ 为归档文档；docs/agent
 ## 约定
 
 - 注释与日志一律中文。
-- 单 `go.mod`，除 `cmd/` 外全部包在 `internal/`；依赖只能向下，反向用函数注入破环。
-- 纯 Go、无 CGo，产物是单个二进制；前端页面用 `go:embed` 内嵌。
+- 单 `go.mod`，除 `cmd/` 外全部包在 `internal/`；`internal/core` 是业务能力、`internal/backend` 是传输与接入，依赖只能 backend → core（由 `boundary_test.go` 强制），反向用函数注入破环。
+- 纯 Go、无 CGo，产物是单个二进制；前端页面源码在顶层 `frontend/`，经 `go generate` 同步后用 `go:embed` 内嵌。
 - 凭据只走环境变量或 `config.toml`（已 gitignore），不进仓库。
 - B 站事件由**外部上报端**经 `/bilibili` 上报：网关不含 B 站协议实现（连接、鉴权、重连、凭据都在上报端）。接入要求与已知坑见 [`docs/BILIBILI_INGEST.md`](docs/BILIBILI_INGEST.md)。
 - 推流（可选）：配 `[stream]` 后由本进程起 Xvfb + Chrome 渲染 `/web/` 画面，ffmpeg 抓屏混音推 RTMP；地址可自动开播获取，也可手填 `output`。登录态用浏览器打开 `http://127.0.0.1:<端口>/login/` 扫码即可（页面仅本机可访问）。

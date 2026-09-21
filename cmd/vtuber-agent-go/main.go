@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Agentropism/vtuber-agent-go/internal/app"
+	"github.com/Agentropism/vtuber-agent-go/internal/backend/app"
 )
 
 func main() {

@@ -21,7 +21,7 @@
 
 调用上传函数后，事件被序列化并进入管线，不等待处理结果。管线从前到后依次为：
 
-1. **去重与敏感词过滤**（`internal/gateway/filter`）：先去重（键 `platform_name:channel_id:message_id`，`message_id` 为空时跳过；窗口由 `[memory].dedup_ttl` 配置，0=不启用），再对 `content_text` 做敏感词匹配（词库文件 `[memory].sensitive_words_file`，UTF-8 每行一词，`#` 开头为注释，前缀树匹配；文件缺失时 `upload.Init()` 返回错误并拒绝启动）。
+1. **去重与敏感词过滤**（`internal/core/gateway/filter`）：先去重（键 `platform_name:channel_id:message_id`，`message_id` 为空时跳过；窗口由 `[memory].dedup_ttl` 配置，0=不启用），再对 `content_text` 做敏感词匹配（词库文件 `[memory].sensitive_words_file`，UTF-8 每行一词，`#` 开头为注释，前缀树匹配；文件缺失时 `upload.Init()` 返回错误并拒绝启动）。
 2. **有界缓存背压**：入队时缓存已满则阻塞等待，等待上限由 `[memory].queue_wait_timeout` 配置（0=无限）；超时则丢弃该事件并记录错误日志。
 3. **Action 顺序门控**：分发期间的上传请求暂存于 `DispatchScope`；server 把非零 Action 写回事件源客户端后、零 Action 事件在分发完成时，才放行入队，保证「先给出 Action，再上传」。
 4. **串行消费**：专用消费协程逐个取出事件调用终端处理器，保证处理顺序与分发顺序一致。
@@ -201,7 +201,7 @@ QQ 的下列 OneBot 通知会被转换为 `type: "notice"` 后上传：
 
 会话生成回复文本后分两路：一路是文本下行（`ReplyFunc`），一路是语音播报（`broadcast.Queue`）。
 
-文本下行的方向由 `internal/agent/conversation.buildReply` 决定：**目前只有 QQ 群有下行动作**（`send_group_msg`），B 站弹幕没有发送接口，因此只生成、不发送。
+文本下行的方向由 `internal/core/agent/conversation.buildReply` 决定：**目前只有 QQ 群有下行动作**（`send_group_msg`），B 站弹幕没有发送接口，因此只生成、不发送。
 
 `server.SendAction` 把标准的 `action.Action` 写到**该事件来源平台**最新连接的客户端；目标平台取自事件本身（`platform_name`），不再依赖历史配置项 `[memory].callback_platform`。平台没有在线客户端、动作名称为空或写入失败时记录错误日志，且不重试。
 
@@ -209,9 +209,9 @@ QQ 的下列 OneBot 通知会被转换为 `type: "notice"` 后上传：
 
 | 职责 | 文件 |
 | --- | --- |
-| 事件信封组装、过滤、背压与投递 | `internal/gateway/upload/client.go` |
-| 管线初始化 | `internal/app/app.go` |
-| QQ 消息、通知及 B 站事件的注册 | `internal/app/register.go` |
-| 事件种类契约 | `internal/shared/event/kind.go` |
-| 事件终端（会话路由与回复） | `internal/agent/conversation/session.go` |
-| 下行 Action 写回 | `internal/gateway/server/server.go` |
+| 事件信封组装、过滤、背压与投递 | `internal/core/gateway/upload/client.go` |
+| 管线初始化 | `internal/backend/app/app.go` |
+| QQ 消息、通知及 B 站事件的注册 | `internal/backend/app/register.go` |
+| 事件种类契约 | `internal/core/shared/event/kind.go` |
+| 事件终端（会话路由与回复） | `internal/core/agent/conversation/session.go` |
+| 下行 Action 写回 | `internal/backend/server/server.go` |

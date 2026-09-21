@@ -1,258 +1,290 @@
 # Grill Me Results
 
-Generated: 2026-09-19T13:07:00.388Z
+Generated: 2026-09-21T02:46:44.031Z
 
 ## Plan
 
-清除原始的git历史，修改目录树的结构为标准的golang项目的结构，迁移根目录
+修改代码的架构，改为前端-后端模式，后端暴露常用的交互和配置接口给前端，修改目录结构，将核心的内容封装为core交给backend使用
 
 ## Shared Understanding
 
-计划「清除 git 历史 + 改造为标准 Go 目录结构 + 迁移根目录」经三轮访谈收敛为 21 条决议，无未决项。核心形态：Go 模块从 onebot-gateway/ 上提到仓库根，module 路径改为 github.com/Agentropism/vtuber-agent-go，除 cmd/ 外全部包移入 internal/，入口改名 cmd/vtuber-agent-go/；仓库 .git 删除前先 bundle 备份，之后 git init 单条初始提交并 force push 覆盖 origin/main；旧 Python 项目 Open-LLM-VTuber/ 移出到 ~/Project/（仍作回滚路径）；文档、AGENTS.md、README、运行时常量命名同批更新；验证门槛为 gofmt -l 空 + go build/vet/test 全绿。本轮仅产出决议，未执行任何迁移动作。
+计划「改为前端-后端模式：后端暴露交互与配置接口给前端，核心内容封装为 core 交给 backend 使用」经两轮访谈 + 一轮范围确认收敛为 23 条决议，无未决项。
+
+**目标形态**：单 Go module 内分三层。`internal/core/` = 业务与领域能力（shared/config/logger/agent/tts/stream + 事件解析与上传管线 gateway/{event,upload,filter}），硬判据是**不 import net/http 与 websocket**；`internal/backend/` = 传输与接入（server 的 WS 接入与 Action 写回、api 的 REST 接口、web 的前端资源托管与 embed 产物、app 装配）；顶层 `frontend/` = 同仓库前端工程（本轮只搬迁现有原生 JS 页面，UI 一行不改），源码经 `go:generate` 拷进 `internal/backend/web/assets/`（gitignore 产物）后被 go:embed，部署仍是单个可执行文件。
+
+**接口面**：REST(`/api/*`) 负责请求-响应，`/api/client-ws` 仍只做推送与回执；破坏式改名且旧路径不留别名——`/inject`→`/api/speak`、`/client-ws`→`/api/client-ws`、`/web/`→`/`（页面占根）、`/live2d-models/`→`/api/models/`、`/login/*` 保持限回环、`[[clients]].path` 是配置项不在改名范围。第一批四项接口：`GET /api/config`（只读 + 密钥脱敏为「是否已配置」）、`/api/speak`、会话列表/历史/以观众身份发消息、`GET /api/status`；第二批（记忆写、模型切换与表情、TTS 试听、推流开播/关播、工具裸调）留下一轮。
+
+**纪律**：搬目录（零行为变化）→ 加 API（旧路径仍可达）→ 一次性路径切换（旧路径下线 + 页面路径常量 + 推流渲染地址同批），每步一个聚焦提交、每步 gofmt+build+vet+test 全绿 + e2e 冒烟（并为新 API 增加 HTTP 断言步骤）；core/backend 单向依赖靠 AGENTS.md 明文 + 一条 import 边界测试强制；AGENTS.md、README、既有契约文档与新增 API 契约文档同批更新。鉴权经明确确认后保持「全部开放、不鉴权」。
 
 ## Questions and Answers
 
-### 1. "迁移根目录"具体指哪一种?推荐 A:仓库根已经是 vtuber-agent-go(GitHub origin 名),Go 模块上提后根目录即 go.mod 所在,名实一致、与已有 remote 对齐。
+### 1. 「前端-后端模式」里的「前端」指哪种形态？
 
-**Recommended answer:** Go 模块上提到仓库根（onebot-gateway/ 内容整体移到 SyAgent-Project/ 根，仓库名 vtuber-agent-go 与内容一致）
+**Recommended answer:** 同仓库前端工程 + 产物 embed（推荐）
 
-**User answer:** Go 模块上提到仓库根
-
-**Status:** resolved
-
-**Notes:** onebot-gateway/ 内的 go.mod、cmd/、各模块目录上提到 /home/hx/Project/SyAgent-Project 根。
-
-### 2. 采用哪种"标准 golang 结构"?注意:现行 AGENTS.md 与 module-layout.md 已定稿"不用 internal/ 前缀,顶层目录即模块边界",选 A/C 会推翻该决议(文档需同批更新)。推荐 A:单二进制应用除 cmd/ 外全部 internal/,是 Go 官方惯例;所谓"将来拆 go.mod"在这个单二进制项目里是 YAGNI。
-
-**Recommended answer:** cmd/onebot-gateway/ 保留，app/ gateway/ agent/ tts/ shared/ config/ logger/ 全部移入 internal/，import 路径批量重写
-
-**User answer:** cmd/ + internal/(推荐)
+**User answer:** 同仓库前端工程 + 产物 embed（推荐）
 
 **Status:** resolved
 
-**Notes:** 推翻 ticket 11 / module-layout.md 的"无 internal/ 前缀"决议，需在文档中标注被取代。
+**Notes:** 前端升级为仓库内独立工程目录，构建产物仍 embed 回二进制；保住「部署只有一个可执行文件」的不变量。
 
-### 3. 迁移后 go.mod 的 module 路径用哪个?推荐 A:与 GitHub origin 完全一致,导入路径即仓库路径,go get 可用、无歧义。
+### 2. 页面技术栈怎么定？
 
-**Recommended answer:** github.com/Agentropism/vtuber-agent-go（与 origin remote 一致）
+**Recommended answer:** 原生 JS + 后端驱动通用表单（推荐）
 
-**User answer:** github.com/Agentropism/vtuber-agent-go(推荐)
-
-**Status:** resolved
-
-**Notes:** 所有 import 需批量重写，包括测试与 doc.go。
-
-### 4. 清除原始 git 历史用哪种做法?推荐 A:删掉 35MB 的 .git 重新 init,得到真正干净的单条初始提交;仓库无 submodule 依赖(OLV 的 frontend/.git 会随 OLV 处置一起决定)。
-
-**Recommended answer:** 删除 .git 重新 git init，得到一条初始提交，之后 force push 覆盖 origin/main
-
-**User answer:** 全新 git init + 单条初始提交(推荐)
+**User answer:** 本轮不动页面，只出 API
 
 **Status:** resolved
 
-**Notes:** 不可逆；远端 origin/main 需 force push，GitHub 旧历史随之被替换。
+**Notes:** 页面维持现状（原生 JS、无构建），本轮后端只出接口；与「同仓库前端工程 + embed」「迁移第三步改前端」的时序需在后续轮次澄清。
 
-### 5. 清历史前是否先在仓库外留一份旧仓库备份?推荐 A:bundle 只有几十 MB,force push 之后本地旧对象就没了,而 GitHub 上的旧历史在 force push 后也只剩不可达对象(会随 GC 清除)。
+### 3. core 的边界画在哪？
 
-**Recommended answer:** 先 git bundle 备份到仓库外（如 ~/Project/.git-backups/vtuber-agent-go-2026-09-19.bundle）
+**Recommended answer:** core = 业务与领域能力，backend = 传输+接入+装配（推荐）
 
-**User answer:** 先 git bundle 备份到仓库外(推荐)
-
-**Status:** resolved
-
-**Notes:** 备份必须在删除 .git 之前完成。
-
-### 6. Open-LLM-VTuber/(225 个已跟踪文件 + 内嵌前端 submodule)如何处置?注意 E8(真实账号联调 + 24h 观察 + 切换判定)尚未完成,它仍是回滚路径。推荐 A:移出仓库、留在本地同级目录,新仓库变成纯 Go,回滚仍可运行。
-
-**Recommended answer:** mv 到 ~/Project/Open-LLM-VTuber，新仓库根只留 Go 项目，回滚仍可本地启动旧服务
-
-**User answer:** 移出仓库到 ~/Project/(推荐)
+**User answer:** core = 业务与领域能力，backend = 传输+接入+装配（推荐）
 
 **Status:** resolved
 
-**Notes:** 同盘 mv 秒完成；内嵌 frontend/.git submodule 随目录一起离开新仓库。
+**Notes:** 判据：core 不 import net/http 与 websocket。core: shared/config/logger/agent/tts/stream + 事件解析与上传管线；backend: gateway/server、新 API、前端资源托管、app 装配。
 
-### 7. 新仓库根目录保留哪些非 Go 内容?推荐 A:全部保留 —— .scratch/go-rewrite 是本 effort 的事实追踪,AGENTS.md/docs/ 是协作契约,工具目录已被 gitignore。
+### 4. 目录布局与命名怎么落？
 
-**Recommended answer:** 全部保留（AGENTS.md、docs/、.scratch/go-rewrite/、.claude/、.codegraph/、.pi/）
+**Recommended answer:** internal/core + internal/backend + 顶层 frontend/（推荐）
 
-**User answer:** 只保留文档,归档 .scratch
-
-**Status:** resolved
-
-**Notes:** AGENTS.md + docs/ 保留；.scratch/go-rewrite/ 需归档（归档目的地待定）；.claude/.codegraph/.pi/ 处置待明确。
-
-### 8. 路径引用文档是否与代码同批更新?涉及:onebot-gateway/AGENTS.md 的模块划分节、onebot-gateway/docs/*(CUTOVER/CONFIG_MIGRATION/EVENT_CONTRACT 等)、.scratch/go-rewrite/{module-layout,execution-plan,issues/11}、根 AGENTS.md 的"无 git remote"表述(已过期,实际有 origin)。推荐 A:同批改,否则迁移完文档立刻自相矛盾。
-
-**Recommended answer:** 同批更新全部引用，旧决议（internal/ 前缀、仓库骨架）标注为被本次取代
-
-**User answer:** 同批更新全部引用(推荐)
+**User answer:** internal/core + internal/backend + 顶层 frontend/（推荐）
 
 **Status:** resolved
 
-**Notes:** 文档更新与代码迁移同属单条初始提交。
+**Notes:** 保持「除 cmd/ 外全部包在 internal/」规则；嵌入资源留在 backend 包内以符合 go:embed 限制。
 
-### 9. 运行时产物(config.toml 含 B站/LLM 凭据、data/memory.jsonl、就地编译的二进制)如何处理?推荐 A:原样跟目录走、继续 gitignore,迁移不需要重新配凭据。
+### 5. 配置接口给到哪一档？
 
-**Recommended answer:** 原样保留并继续 gitignore，凭据与记忆不重新配置
+**Recommended answer:** 只读 + 密钥脱敏（推荐）
 
-**User answer:** 原样保留并继续 gitignore(推荐)
-
-**Status:** resolved
-
-**Notes:** config.toml 与 data/ 跟随迁移，绝不进版本控制。
-
-### 10. 清历史后的新仓库首个历史形状?推荐 A:单条初始提交代表当前完整状态(清历史的目的就是让历史从现状起算)。
-
-**Recommended answer:** 单条初始提交（代码 + 标准结构 + 文档一次提交）
-
-**User answer:** 单条初始提交(推荐)
+**User answer:** 只读 + 密钥脱敏（推荐）
 
 **Status:** resolved
 
-**Notes:** 新历史从现状起算，blame 从此刻开始。
+**Notes:** GET /api/config 返回分组字段值与「密钥是否已配置」，绝不回传明文；写配置与热生效本轮不做。
 
-### 11. 目录迁移后跑多深的验证?推荐 A:静态检查 + 单测全绿是目录/import 重写唯一可靠的正确性证明(go build/vet/test 都能独立于外部凭据)。
+### 6. 交互接口本轮要暴露哪些？（多选）
 
-**Recommended answer:** gofmt + go build ./... + go vet ./... + go test ./...（覆盖 6 个测试包）
+**Recommended answer:** 先做前三项：播报注入、会话读写、运行状态
 
-**User answer:** gofmt + go build + go vet + go test(推荐)
-
-**Status:** resolved
-
-**Notes:** 不跑 scripts/e2e 冒烟；验证在提交前完成，失败则视为迁移未完成。
-
-### 12. 上提后两份 AGENTS.md 会在根目录撞车(根版 96 行写"三个子项目",已过期：OLV 即将移出、bilibili-live 根本不在本仓、且"无 git remote"与实际不符;onebot 版 139 行是当前有效的 Go 项目指南)。推荐 A:子版内容准确且自包含，根版描述的对象已不存在于本仓。
-
-**Recommended answer:** onebot 版升格为根 AGENTS.md，根工作区指南删除
-
-**User answer:** onebot 版升格为根,工作区版删除(推荐)
+**User answer:** 播报注入 / 说话（/inject 同能力）；会话：列出渠道会话、查看历史、以观众身份发一条消息；运行状态：接入客户端连接、播报队列深度、上报管线统计；记忆：查询 / 新增 / 删除条目；模型与表情：切换 Live2D 模型、表情预览；TTS：列出引擎与音色、试听；推流：开播 / 关播 / 状态；工具：列出已注册工具、直接调用（全选 8 类）
 
 **Status:** resolved
 
-**Notes:** 与第三轮 docs-agents 答案合读：工作区版整体删除，但其中的 Agent skills 节内容迁入新根 AGENTS.md 并指向保留的 docs/agents/。
+**Notes:** 8 类接口全选，含写操作与子系统重建类（推流生命周期、模型切换、记忆删除、工具调用）；是否分批待下一轮澄清。
 
-### 13. 两份 docs/ 合并后如何组织?现状：onebot-gateway/docs/ 是活契约(6 份 API/契约文档 + raw-event.json + superpowers/),根 docs/ 是流程与历史(agents/ 三份流程说明、superpowers/、delivery-2026-08-04-bilibili-events.md、refactor-2026-09-06-fullstack-rearchitecture.md)。推荐 A:活契约放顶层便于查找,已失效的历史文档不应与它并列。
+### 7. 接口形态走哪种？
 
-**Recommended answer:** 契约文档升到根 docs/，旧文进 docs/archive/
+**Recommended answer:** REST(/api/*) + /client-ws 仅推送（推荐）
 
-**User answer:** 契约文档升到根 docs/,旧文进 docs/archive/(推荐)
-
-**Status:** resolved
-
-**Notes:** 契约文档：CUTOVER / EVENT_CONTRACT / INJECT_API / CLIENT_INTEGRATION / CONFIG_MIGRATION / MEMORY_API / raw-event.json 上提到根 docs/；旧根文档与两份 docs/superpowers/ 进 docs/archive/（文件名无冲突，可合并）。
-
-### 14. README 如何处理?现状：根 README.md 只有一行标题"# vtuber-agent-go";onebot-gateway/README.md 是 23 行早期开发笔记(描述已过期:讲的还是"堆 handler 函数"的阶段,测试也已存在)。推荐 A:仓库首页应当能说明项目是什么、怎么跑。
-
-**Recommended answer:** 重写根 README（项目说明 + 构建运行 + 指向 AGENTS.md），onebot 子版删除
-
-**User answer:** 重写根 README,子版删除(推荐)
+**User answer:** REST(/api/*) + /client-ws 仅推送（推荐）
 
 **Status:** resolved
 
-**Notes:** 根 README 扩写：单二进制 Go 重写、模块划分、构建运行、指向 AGENTS.md；onebot-gateway/README.md 删除。
+**Notes:** 请求-响应走 HTTP JSON，推送与回执仍走既有 WS；同源，无 CORS 问题。
 
-### 15. .scratch/go-rewrite/(12 张决策票 + execution-plan + module-layout + map)归档到哪里?你上一轮选了"只保留文档,归档 .scratch",但归档目的地未定。推荐 A:它是决策溯源,与 docs/ 同属文档，放在仓内可继续被检索。
+### 8. 新 API 的暴露面与鉴权？
 
-**Recommended answer:** 移到 docs/archive/go-rewrite/ 并继续跟踪
+**Recommended answer:** 全部限回环（推荐）
 
-**User answer:** 归档到 docs/archive/(推荐)
-
-**Status:** resolved
-
-**Notes:** 归档 ≠ 关闭（见第三轮 effort-status）：迁移后 effort 在 docs/archive/go-rewrite/ 继续更新 E8 尾巴。
-
-### 16. 上提后非 Go 资产的落点?现状:characters/mili.toml(角色资产)、scripts/e2e/(冒烟脚本) 、config.toml.example、data/(记忆)、以及 internal/agent/frontend/web/(前端页面,go:embed 内嵌)。推荐 A:标准 Go 布局不约束非 Go 资产，现状位置本就是最常见做法，改动为零。
-
-**Recommended answer:** 维持现状位置（非 Go 资产与 Go 包同层，web 资源留在包内）
-
-**User answer:** 维持现状位置(推荐)
+**User answer:** 不鉴权，沿用当前局域网信任模型
 
 **Status:** resolved
 
-**Notes:** characters/mili.toml、scripts/e2e/、config.toml.example、data/ 与 Go 包同层；internal/agent/frontend/web/ 因 go:embed 必须留在包内。stream/ 包按同一规则进 internal/stream/。
+**Notes:** 与 /inject 现状一致、改动最少；但结合已选的写操作接口（开播/关播、记忆删除、工具调用、替观众发消息），局域网内任何设备都能调用，风险面需在下一轮确认是否收窄。
 
-### 17. 本机工具目录 .claude/ .codegraph/ .pi/ 如何处置?你上一轮选了"只保留文档"(它们是本机工具状态，不是项目交付物)。推荐 A:它们已被 gitignore，不进入新历史；删除只会重生成。
+### 9. 现有对外契约是否必须保持兼容？
 
-**Recommended answer:** 留原地并继续 gitignore
+**Recommended answer:** 保持兼容，新接口并存（推荐）
 
-**User answer:** 全部删除
-
-**Status:** resolved
-
-**Notes:** .claude/ 仅有 settings.local.json；.codegraph/ 本机缓存；.pi/ 含 bg 任务日志与 grill-me/state.json。删除必须在 grill_save_results 之后执行，否则丢失本次访谈状态。新仓库 .gitignore 补 .pi/、.claude/、.codegraph/。
-
-### 18. 工作区里 docs/PRD.md、docs/QA.md 已被删除(尚未提交)，如何处理?两份内容描述的是旧三子系统架构(OLV + onebot-gateway + bilibili-live)与旧需求清单，且被三处文档引用。推荐 A:内容描写的架构已被 Go 重写取代,清历史后不应再把已死的架构写进新历史的初始快照。
-
-**Recommended answer:** 接受删除，并把三处「PRD 九」引用标注为已失效
-
-**User answer:** 接受删除并修引用(推荐)
+**User answer:** 允许破坏式改名，同批更新文档与页面
 
 **Status:** resolved
 
-**Notes:** 引用 PRD 九 的三处：docs/refactor-2026-09-06-fullstack-rearchitecture.md（两处）、.scratch/go-rewrite/map.md、issues/08-memory-simplification.md，标注为「PRD 已删除，需求九由 docs/MEMORY_API.md 承接」。
+**Notes:** 路径统一到 /api/* 口径，外部调用方（/inject 调用者）与内置页面须同批更新；具体路径命名与旧别名策略待下一轮澄清。
 
-### 19. 入口目录与二进制叫什么?现状 cmd/onebot-gateway/，二进制就地编译为 onebot-gateway。推荐 B:本次迁移的目的就是"名实一致"，而这个二进制现在装的是整个系统(接入+会话+LLM+TTS+前端)，早已不只是网关。
+### 10. 迁移节奏与验证门槛？
 
-**Recommended answer:** cmd/vtuber-agent-go/，二进制同名
+**Recommended answer:** 搬目录 → 加 API → 改前端，每步全绿（推荐）
 
-**User answer:** cmd/vtuber-agent-go/,二进制同名(推荐)
-
-**Status:** resolved
-
-**Notes:** 改名辐射面：cmd 目录、.gitignore 一行、根 AGENTS.md 常用命令、docs/CUTOVER.md 三处、scripts/e2e/run.sh 三处 + 退出日志断言、main.go 退出日志字符串。
-
-### 20. docs/agents/ 三份流程文档怎么算?它们被引用情况:根 AGENTS.md 的 Agent skills 节(你已选删除该版)、.scratch/go-rewrite/map.md。你上一轮选了"旧文进 docs/archive/"，但这三份是活约定不是历史文。
-
-**Recommended answer:** docs/agents/ 保留为活文档，新根 AGENTS.md 重建 Agent skills 节指向它
-
-**User answer:** 保留为活文档，新 AGENTS.md 重建引用(推荐)
+**User answer:** 搬目录 → 加 API → 改前端，每步全绿（推荐）
 
 **Status:** resolved
 
-**Notes:** docs/agents/{issue-tracker,triage-labels,domain}.md 不进 archive/，留在根 docs/；新根 AGENTS.md 重建 Agent skills 节（含「本仓库根无 git remote」的过期表述需改为 GitHub remote 存在）。
+**Notes:** 每步一个聚焦提交，第一段要求零行为变化；与「本轮不动页面」的时序冲突待澄清。
 
-### 21. .scratch/go-rewrite 归档后，effort 算关闭吗?背景：map.md 进度 95%，未完成项是 E8 尾巴(真实账号联调 + 24h 观察)；而回滚路径(OLV)本轮刚被移出仓库。推荐 A：归档只是换位置，E8 未完成就宣布关闭会让追踪断在迁移当天。
+### 11. core→backend 的单向依赖怎么强制？
 
-**Recommended answer:** 归档 ≠ 关闭，E8 尾巴继续跟踪
+**Recommended answer:** 约定 + import 边界测试（推荐）
 
-**User answer:** 归档 ≠ 关闭，E8 尾巴继续跟踪(推荐)
+**User answer:** 约定 + import 边界测试（推荐）
 
 **Status:** resolved
 
-**Notes:** E8 尾巴（真实账号联调 + 24h 观察 + 切换判定）在 docs/archive/go-rewrite/map.md 继续跟踪；回滚路径 OLV 已移出仓库但仍可本地启动。
+**Notes:** AGENTS.md 明文 + 一条单测遍历包依赖：core 出现 net/http/websocket 或 core 反向 import backend 即失败。
+
+### 12. 本轮 grill-me 结束后产出什么？
+
+**Recommended answer:** 只落规格/决议文档（推荐）
+
+**User answer:** 决议 + 直接执行重构
+
+**Status:** resolved
+
+**Notes:** 决议落盘后直接开工，按「搬目录 → 加 API → 改前端」分步提交。
+
+### 13. 文档同批更新范围？
+
+**Recommended answer:** 全部同批更新 + 新增 API 契约文档（推荐）
+
+**User answer:** 全部同批更新 + 新增 API 契约文档（推荐）
+
+**Status:** resolved
+
+**Notes:** AGENTS.md 模块划分与依赖方向、README 目录与快速开始、既有契约文档的路径引用同批改，新接口另写 API 契约文档。
+
+### 14. 本轮决议写到哪里？
+
+**Recommended answer:** 旧文件归档到 docs/archive/，新决议写 GRILL-ME.md（推荐）
+
+**User answer:** 旧文件归档到 docs/archive/，新决议写 GRILL-ME.md（推荐）
+
+**Status:** resolved
+
+**Notes:** 先 git mv GRILL-ME.md 到 docs/archive/（如 grill-me-2026-09-19-repo-restructure.md），新决议写入默认 GRILL-ME.md。
+
+### 15. 冲突点：你选了「不鉴权、沿用局域网信任」，但又选了写操作（开播/关播、记忆删除、工具调用、替观众发消息）。写接口暴露面怎么定？
+
+**Recommended answer:** 写操作限回环，只读放开（推荐）
+
+**User answer:** 全部开放，一律不鉴权
+
+**Status:** resolved
+
+**Notes:** 用户在明确知晓风险后选择全开放：开播/关播、记忆删除、工具调用、替观众发消息均不鉴权，暴露面由 [server].addr 绑定地址决定。
+
+### 16. 冲突点：前端形态选了「同仓库前端工程 + 产物 embed」，技术栈选了「本轮不动页面」，迁移节奏又写了「第三步改前端」。本轮前端落到哪一步？
+
+**Recommended answer:** 建 frontend/ 并搬迁页面源码，UI 不变（推荐）
+
+**User answer:** 建 frontend/ 并搬迁页面源码，UI 不变（推荐）
+
+**Status:** resolved
+
+**Notes:** 本轮建顶层 frontend/（index.html、app.js、libs/），页面 UI 与逻辑不变；仅同步路径常量与 embed 位置。
+
+### 17. 顶层 frontend/ 的源码怎么进到 backend 的 embed 包？
+
+**Recommended answer:** go:generate 拷贝，产物 gitignore（推荐）
+
+**User answer:** go:generate 拷贝，产物 gitignore（推荐）
+
+**Status:** resolved
+
+**Notes:** go:generate 把 frontend/ 拷到 internal/backend/web/，产物 gitignore；构建说明与 AGENTS.md 需写明「忘了 go generate 则嵌的是旧页面」。
+
+### 18. 8 类交互接口一次全做，还是分批？
+
+**Recommended answer:** 第一批四项，其余第二批（推荐）
+
+**User answer:** 第一批四项，其余第二批（推荐）
+
+**Status:** resolved
+
+**Notes:** 第一批：GET /api/config、/api/speak、会话列表/历史/发消息、GET /api/status；第二批：记忆写、模型切换/表情、TTS 试听、推流控制、工具调用。
+
+### 19. 破坏式改名后具体路径怎么定？
+
+**Recommended answer:** 全量 /api/* + 页面占根（推荐）
+
+**User answer:** 全量 /api/* + 页面占根（推荐）
+
+**Status:** resolved
+
+**Notes:** /inject→POST /api/speak；/client-ws→/api/client-ws；/web/→/（页面占根）；/live2d-models/→/api/models/；新接口均 /api/*；/login/* 保持限回环；旧路径不留别名。连带：推流渲染地址 /web/?autostart=1 需改为 /?autostart=1，e2e 浏览器脚本同批改。
+
+### 20. core/ 内部子包名怎么处理？
+
+**Recommended answer:** 原样搬，仅加 core/ 前缀（推荐）
+
+**User answer:** 原样搬，仅加 core/ 前缀（推荐）
+
+**Status:** resolved
+
+**Notes:** core/{shared,config,logger,agent,tts,stream,gateway}，backend/{server,api,web}；搬迁步骤零语义变更、diff 只有 import 前缀。
+
+### 21. 「以观众身份发一条消息」的语义怎么定？
+
+**Recommended answer:** 走上传管线，等同平台事件，落记忆（推荐）
+
+**User answer:** 走上传管线，等同平台事件，落记忆（推荐）
+
+**Status:** resolved
+
+**Notes:** POST /api/sessions/{id}/messages 带 {user_id,user_name,text}，经 upload 管线（去重/敏感词/门控一致）入会话并落记忆，等同「用 HTTP 模拟一个观众事件」。
+
+### 22. 每步的验证门槛怎么定？
+
+**Recommended answer:** 全绿 + e2e 冒烟 + 新 API 的 e2e 断言（推荐）
+
+**User answer:** 全绿 + e2e 冒烟 + 新 API 的 e2e 断言（推荐）
+
+**Status:** resolved
+
+**Notes:** 每步 gofmt+build+vet+test 全绿 + e2e 冒烟，并新增 e2e 步骤用 HTTP 调 /api/* 断言响应；未选 -race，标记为待补风险。
+
+### 23. 最后一问：本轮实际执行的边界到哪？
+
+**Recommended answer:** 搬到第二步 + 同批路径切换，第二批下一轮（推荐）
+
+**User answer:** 搬到第二步 + 同批路径切换，第二批下一轮（推荐）
+
+**Status:** resolved
+
+**Notes:** 本轮执行：第一步搬目录（core/backend + 边界测试 + embed 链路 + 文档），第二步新路由与第一批四项接口（/api/config、/api/speak、/api/sessions*、/api/status，旧路径此阶段仍可达），第三步一次性路径切换（旧路径下线 + 页面路径常量 + 推流渲染地址同批）。第二批（记忆/模型/TTS/推流/工具）下一轮。
 
 ## Agreed Decisions
 
-- 根目录迁移语义：onebot-gateway/ 内的 Go 模块内容整体上提到 /home/hx/Project/SyAgent-Project 根，仓库根即 go.mod 所在（与 GitHub origin 名 vtuber-agent-go 一致）。
-- 结构形态：采用 cmd/ + internal/；cmd/vtuber-agent-go/ 保留在顶层，app/ gateway/ agent/ tts/ shared/ config/ logger/ 以及 stream/ 全部移入 internal/，import 路径批量重写。推翻 ticket 11 / module-layout.md 的「无 internal/ 前缀」决议，并在文档中标注被取代。
-- go.mod module 路径：github.com/Agentropism/vtuber-agent-go（与 origin remote 一致）。
-- 入口命名：cmd/onebot-gateway/ 改名为 cmd/vtuber-agent-go/，二进制同名；辐射面包括 .gitignore 一行、根 AGENTS.md 常用命令、docs/CUTOVER.md 三处、scripts/e2e/run.sh 三处与退出日志断言、main.go 退出日志字符串。
-- git 历史清除：删除 .git 重新 git init，得到单条初始提交（代码 + 标准结构 + 文档一次提交），随后 force push 覆盖 origin/main。
-- 旧历史备份：清历史前先 git bundle 备份到仓库外（~/Project/.git-backups/vtuber-agent-go-2026-09-19.bundle）。
-- 旧 Python 项目：mv Open-LLM-VTuber/ 到 ~/Project/Open-LLM-VTuber，移出新仓库；内嵌 frontend/.git submodule 随目录一起离开；回滚仍可本地启动旧服务。
-- 非 Go 内容：AGENTS.md 与 docs/ 保留，.scratch/go-rewrite/ 归档到 docs/archive/go-rewrite/，本机工具目录 .claude/ .codegraph/ .pi/ 全部删除。
-- AGENTS.md 归并：onebot-gateway/AGENTS.md 升格为根 AGENTS.md，原根工作区指南删除；但 Agent skills 节需在新根 AGENTS.md 中重建并指向保留的 docs/agents/（含修正「本仓库根无 git remote」的过期表述）。
-- docs/ 归并：活契约文档（CUTOVER / EVENT_CONTRACT / INJECT_API / CLIENT_INTEGRATION / CONFIG_MIGRATION / MEMORY_API / raw-event.json）升到根 docs/；旧文档（delivery-2026-08-04-*.md、refactor-2026-09-06-*.md）与两份 docs/superpowers/ 进 docs/archive/（文件名无冲突，合并保留）。
-- docs/agents/{issue-tracker,triage-labels,domain}.md 为活文档，不进 archive/，继续留在根 docs/ 并被新根 AGENTS.md 引用。
-- README：重写根 README（项目说明 + 构建运行 + 指向 AGENTS.md），删除 onebot-gateway/README.md。
-- 运行时常量处置：config.toml（含凭据）与 data/memory.jsonl 原样跟随迁移，继续 gitignore，不重新配置；就地编译的二进制重新生成。
-- 非 Go 资产落点：characters/、scripts/e2e/、config.toml.example、data/ 维持与 Go 包同层；internal/agent/frontend/web/ 因 go:embed 必须留在包内。
-- PRD/QA：接受 docs/PRD.md、docs/QA.md 的既有删除，并把三处「PRD 九」引用（docs/refactor-2026-09-06-*.md 两处、docs/archive/go-rewrite/{map.md,issues/08}）标注为已失效。
-- 文档路径同步：路径引用文档与代码同批更新（根 AGENTS.md、docs/*、docs/archive/go-rewrite/*），旧决议标注为被本次取代。
-- effort 状态：.scratch/go-rewrite 归档 ≠ 关闭，E8 尾巴（真实账号联调 + 24h 观察 + 切换判定）继续在 docs/archive/go-rewrite/ 跟踪。
-- 验证门槛：迁移后跑 gofmt（gofmt -l 现状已为空）+ go build ./... + go vet ./... + go test ./...（覆盖 6 个测试包），不跑 scripts/e2e 冒烟；测试失败即视为迁移未完成。
+- 前端形态：同仓库前端工程 + 构建产物 embed 回二进制，保住「部署只有一个可执行文件」的不变量
+- 页面技术栈：本轮不动页面 UI 与逻辑，只搬迁源码与同步路径常量；配置/会话面板留下一轮
+- core 边界：core 不 import net/http 与 websocket；core = shared/config/logger/agent/tts/stream + gateway/{event,upload,filter}；backend = gateway/server、api、web 资源托管、app 装配
+- 目录布局：internal/core/ + internal/backend/ + 顶层 frontend/（保持「除 cmd/ 外全部包在 internal/」规则）
+- 配置接口：只读 GET /api/config，密钥类一律脱敏为「是否已配置」，写配置与热生效本轮不做
+- 交互接口范围：8 类全选（播报注入、会话读写、运行状态、记忆 CRUD、模型与表情、TTS 试听、推流控制、工具调用），但分批交付
+- 接口形态：HTTP JSON 负责请求-响应（/api/*），/api/client-ws 保持只做推送与回执，两者同源无 CORS
+- 鉴权与暴露面：/api/* 一律不鉴权，沿用当前局域网信任模型（写操作也不限回环）——经明确确认
+- 契约：允许破坏式改名，外部调用方与内置页面同批更新
+- 迁移节奏：搬目录 → 加 API → 一次性路径切换，每步一个聚焦提交、每步全绿
+- 边界强制：AGENTS.md 明文 + 一条 import 边界测试（core 出现 net/http/websocket 或反向 import backend 即失败）
+- 本轮产出：决议 + 直接执行重构，不止于文档
+- 文档：AGENTS.md（模块划分与依赖方向）、README（目录与快速开始）、既有契约文档路径引用全部同批更新，并新增 API 契约文档
+- 决议落盘：旧 GRILL-ME.md git mv 到 docs/archive/grill-me-2026-09-19-repo-restructure.md，新决议写入 GRILL-ME.md
+- 写接口暴露面：全部开放，不鉴权（开播/关播、记忆删除、工具调用、替观众发消息均可局域网调用）
+- 前端落点：本轮建顶层 frontend/（index.html、app.js、libs/）并搬迁页面源码，UI 不变，仅同步路径常量与 embed 位置
+- 嵌入同步：go:generate 把 frontend/ 拷到 internal/backend/web/assets/，产物 gitignore，单一事实源
+- 接口分批：第一批 = GET /api/config、/api/speak、会话列表/历史/发消息、GET /api/status；第二批 = 记忆写、模型切换/表情、TTS 试听、推流控制、工具调用
+- 路径命名（全量 /api/* + 页面占根，旧路径不留别名）：/inject→POST /api/speak、/client-ws→/api/client-ws、/web/→/、/live2d-models/→/api/models/、新接口 /api/{config,sessions,status,memory,models,tts,stream,tools}、/login/* 与 /favicon.ico 保持、[[clients]].path 不变
+- core 子包命名：原样搬、仅加 core/ 前缀（core/{shared,config,logger,agent,tts,stream,gateway}），backend/{server,api,web}；重命名另开一轮
+- 会话写语义：POST /api/sessions/{id}/messages 带 {user_id,user_name,text}，经 upload 管线（去重/敏感词/门控一致）入会话并落记忆，等同「用 HTTP 模拟一个观众事件」
+- 验证门槛：每步 gofmt+build+vet+test 全绿 + e2e 冒烟 + 新增 e2e 步骤用 HTTP 调 /api/* 并断言响应
+- 本轮执行范围：第一步（搬目录 + 边界测试 + embed 链路 + 文档）+ 第二步（新路由与第一批四项接口，旧路径此阶段仍可达）+ 第三步（一次性路径切换：旧路径下线、页面路径常量、推流渲染地址同批）；第二批接口下一轮
+- 路径切换的实现约束：为满足「每步全绿」，第二步先以新路径提供服务且旧路径保持可达，第三步才下线旧路径并同批改页面路径常量与推流渲染地址 /web/?autostart=1 → /?autostart=1
 
 ## Open Risks
 
-- force push 覆盖 origin/main 会替换 GitHub 上的公开历史，不可逆；本地 bundle 备份是唯一回捞途径，必须在删除 .git 之前完成。
-- 错误重写字符串字面量中的 "onebot-gateway"：main.go 退出日志、scripts/e2e/run.sh 的日志断言（grep -q "onebot-gateway 已退出"）、docs/CUTOVER.md 均含该串，漏改会让测试与文档断言失效。
-- 删除 .pi/ 会丢失 .pi/grill-me/state.json 与 .pi/tasks 日志，必须在本访谈结果保存之后执行；删除后 pi 会重建目录，新仓库 .gitignore 需补 .pi/、.claude/、.codegraph/ 三条。
-- config.toml 含 B站 access key 与 LLM key，目录搬迁中若误加进索引即泄密；新历史只有一条提交，误提交无法靠历史回退掩盖。
-- Open-LLM-VTuber 移出仓库后成为仓外目录，uv 虚拟环境（.venv）内可能含绝对路径，回滚启动前需确认仍可用；E8 观察期内回滚是手动路径。
-- onebot-gateway/.worktrees/（空目录）与 OLV 的 .gitmodules 未在票中单列：前者随 Go 树上提，后者随 OLV 离开新仓库，需在执行时确认无残留引用。
-- onebot-gateway/AGENTS.md 中「go test ./...（尚无测试用例）」为过期表述，同批更新时会一并修正。
+- /api/* 全部无鉴权且含写操作（开播/关播、记忆删除、工具调用、替观众发消息），实际暴露面等于 [server].addr；局域网任意设备可开播或删数据。协议默认（未经单独确认）：启动日志显式提示「绑定地址即暴露面」，API 契约文档标注无鉴权姿态——如需收紧，改回写操作限回环即可（loopbackOnly 已存在）
+- 验证门槛未含 go test -race；新 API 与播报/会话/推流并发，第二批引入推流可启停后竞态风险上升，建议第二批落地时补 -race
+- go:generate 忘跑会导致二进制内嵌旧页面；需在构建说明与 AGENTS.md 写明，并让 e2e 断言页面路径可访问（否则漂移无人发现）
+- 页面占根后 /web/ 书签失效；推流渲染地址 /web/?autostart=1 漏改会让推流渲染 404，画面直接断——已列入第三步同批清单
+- 第一步的「零行为变化」需靠「diff 只有 import 前缀 + 全绿 + e2e」证明；若顺手重命名或改逻辑，这个基准即失效
+- 前端「同仓库工程」在原生 JS 无构建前提下只能靠 go:generate 拷贝落地；下一轮若引入 Vite/框架，embed 流程（产物是否提交、生成时机、构建依赖）需重新定义
+- 8 类接口的 4 项第二批各自牵动子系统重建（推流生命周期对象、模型切换重建 catalog、TTS 试听是否绕过队列、记忆删除要改追加式存储语义），这些细节尚未决策，需下一轮澄清
 
 ## Next Decision Needed
 
-本轮仅产出决议，尚未执行任何迁移动作。待确认：是否现在按上述 21 条决议执行迁移（含 force push 覆盖 origin/main 这一步）。
+本轮无未决项。下一轮开始前需要决定的是第二批接口的实现细节：推流从「随进程起停」改为可启停生命周期对象的边界、模型切换是否需要重建前端 catalog/表情词表、TTS 试听是否绕过播报队列的冷却与抢占、记忆删除在 JSON Lines 追加式存储上的语义（重写文件 vs 墓碑标记）。

@@ -16,3 +16,7 @@ data/
 # 运行时配置的备份：同样含凭据，绝不能进仓库
 config.toml.bak
 config.toml.*.bak
+
+# 前端源码产物：由 go generate 从顶层 frontend/ 同步（单一事实源），只跟踪占位文件。
+/internal/backend/web/assets/*
+!/internal/backend/web/assets/.gitkeep

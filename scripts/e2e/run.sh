@@ -32,6 +32,7 @@ trap cleanup EXIT
 
 echo "==> 构建"
 cd "$REPO_DIR"
+go generate ./...   # 页面资源是 embed 产物，先同步再编译
 go build -o "$WORK_DIR/vtuber-agent-go" ./cmd/vtuber-agent-go/
 cp -r characters "$WORK_DIR/"
 cp scripts/e2e/fakes.py "$WORK_DIR/"

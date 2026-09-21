@@ -7,34 +7,38 @@
 
 ## 模块划分
 
-单 `go.mod`（module `github.com/Agentropism/vtuber-agent-go`）；**除 `cmd/` 外全部包位于 `internal/`**，`internal/` 下的目录即模块边界。依赖只能向下，反向用函数注入破环（先例 `internal/gateway/upload.SetHandler`），不引入 DI 容器。
+单 `go.mod`（module `github.com/Agentropism/vtuber-agent-go`）；**除 `cmd/` 外全部包位于 `internal/`**，`internal/` 第一层就是三段边界：`core`（业务与领域能力）/ `backend`（传输与接入）。依赖只能向下：backend → core，core 不知道 backend；反向用函数注入破环（先例 `internal/core/gateway/upload.SetHandler`、`web.Sink`），不引入 DI 容器。这条边界由 `internal/backend/app/boundary_test.go` 强制执行（core 不得反向依赖 backend、不得引入 websocket、源码里不得出现 HTTP 服务端标识符）。
 
 ```text
 cmd/vtuber-agent-go/  入口(单二进制;唯一不在 internal/ 下的包)
-internal/app/        装配:config → logger → 注入 → 注册 handler → 路由
-internal/gateway/    接入层:只认平台协议,不认会话/LLM
-  event/               平台分发(event.Dispatch)+ onebot/ + bilibililive/(纯数据)
-  server/              WS 接入与 Action 写回 + POST /inject 播报注入
-  upload/              事件上行管线(去重/敏感词 → 背压 → 分发门控),出口由 SetHandler 注入
-  filter/              去重 + 敏感词
-internal/agent/      编排层:只认事件与会话,不认平台协议
-  conversation/        会话编排:按 channel_id 的会话管理 + 单会话 Agent(上传管线的终端)
-    llm/               OpenAI 兼容端点的流式客户端(基于 go-openai,无状态)
-  broadcast/           统一播报队列(优先级/抢占/冷却/并行合成),Synthesizer+Sink 注入
-  memory/              长期记忆：追加式 JSON Lines + 关键词（二元组）召回
-  frontend/            /client-ws 协议、Live2D 页面与模型托管、播报 Sink
-  tool/                Tool 注册层
-internal/tts/        云 TTS 引擎(5 家 + failover,不做本地推理);统一输出裸 PCM16 24kHz 单声道
-internal/stream/     推流层:开播取地址(B站 web 接口)+ Xvfb/Chrome 渲染 + ffmpeg 抓屏混音 → RTMP;由 [stream] 驱动
-internal/shared/     跨模块契约(零内部依赖);`action` 为下行 Action 契约
-internal/config/ internal/logger/  基础设施
-characters/ scripts/ config.toml.example   非 Go 资产,与 Go 包同层;前端静态页面在 internal/agent/frontend/web/(go:embed,必须留在包内)
+internal/core/        业务与领域能力:出站 HTTP 客户端可以有,服务端与 WS 没有
+  shared/             跨模块契约(零内部依赖);`action` 为下行 Action 契约
+  config/ logger/     基础设施
+  agent/              编排层:只认事件与会话,不认平台协议
+    conversation/     会话编排:按 channel_id 的会话管理 + 单会话 Agent(上传管线的终端)
+      llm/            OpenAI 兼容端点的流式客户端(基于 go-openai,无状态)
+    broadcast/        统一播报队列(优先级/抢占/冷却/并行合成),Synthesizer+Sink 注入
+    memory/           长期记忆：追加式 JSON Lines + 关键词（二元组）召回
+    tool/             Tool 注册层
+  gateway/            平台侧的事件与上行能力(不含服务端)
+    event/            平台分发(event.Dispatch)+ onebot/ + bilibililive/(纯数据)
+    upload/           事件上行管线(去重/敏感词 → 背压 → 分发门控),出口由 SetHandler 注入
+    filter/           去重 + 敏感词
+  tts/                云 TTS 引擎(5 家 + failover,不做本地推理);统一输出裸 PCM16 24kHz 单声道
+  stream/             推流层:开播取地址(B站 web 接口)+ Xvfb/Chrome 渲染 + ffmpeg 抓屏混音 → RTMP;由 [stream] 驱动
+internal/backend/     传输与接入:HTTP/WS 服务端、前端资源托管、装配
+  app/                装配:config → logger → 注入 → 注册 handler → 路由
+  server/             WS 接入与 Action 写回 + POST /inject 播报注入
+  web/                /client-ws 协议、Live2D 页面与模型托管、播报 Sink;页面资源 embed 自顶层 frontend/
+frontend/             前端工程源码(页面 + libs);go generate 同步到 internal/backend/web/assets/(产物 gitignore)
+characters/ scripts/ config.toml.example   非 Go 资产,与 Go 包同层
 ```
 
-接口归调用方所有:agent 定义需要什么,gateway/tts 提供实现;反向只走 `SetXxxFunc`。
+接口归调用方所有:core 定义需要什么,backend 提供实现(如 `web` 的播报 Sink、`server` 的 Action 写回);反向只走 `SetXxxFunc`。
 ## 常用命令
 
 ```bash
+go generate ./...                 # 把 frontend/ 的前端资源同步进 embed 包（改过页面必跑）
 go build ./cmd/vtuber-agent-go/  # 编译
 ./vtuber-agent-go                # 运行（需要 config.toml 在当前目录，见 config.toml.example）
 go vet ./...                     # 静态检查

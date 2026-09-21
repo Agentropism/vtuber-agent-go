@@ -4,7 +4,7 @@
 `adapter_key = "bilibili_live"`）。连开放平台、鉴权、心跳、重连、拆帧全部由**外部上报端**负责，
 凭据也在上报端自己的配置里。
 
-> 本仓库此前内置过一个 Go 版开放平台客户端（`internal/gateway/bilibili`，2026-09 删除）。
+> 本仓库此前内置过一个 Go 版开放平台客户端（`internal/core/gateway/bilibili`，2026-09 删除）。
 > 下方「已知坑」是那次实现相对原 Rust 客户端（`bilibili-live`）修正过的**实测缺陷**——
 > 如果上报端选原 Rust 客户端，这些坑会原样回来。
 
