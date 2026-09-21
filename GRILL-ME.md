@@ -288,3 +288,28 @@ Generated: 2026-09-21T02:46:44.031Z
 ## Next Decision Needed
 
 本轮无未决项。下一轮开始前需要决定的是第二批接口的实现细节：推流从「随进程起停」改为可启停生命周期对象的边界、模型切换是否需要重建前端 catalog/表情词表、TTS 试听是否绕过播报队列的冷却与抢占、记忆删除在 JSON Lines 追加式存储上的语义（重写文件 vs 墓碑标记）。
+
+## 执行结果（2026-09-21）
+
+三轮提交，每步验证门槛：`go generate` + `gofmt` + `go build` + `go vet` + `go test ./...`（17 个包）+ `scripts/e2e/run.sh`（含浏览器检查）全绿。
+
+| 提交 | 内容 |
+| --- | --- |
+| `8d3afd7` | 第一步：拆 core/backend 两段边界，前端源码上提到顶层 `frontend/`，`go:generate` embed 链路，import 边界测试 |
+| `07b9221` | 第二步：`internal/backend/api` 与第一批四项接口（配置只读、播报注入、会话读写、运行状态） |
+| `8f7c22b` | 第三步：路径切换（页面占根、接口统一 `/api/*`、旧路径下线） |
+
+### 执行中对访谈字面的两处细化
+
+1. **core 边界判据**：字面写的「core 不 import net/http 与 websocket」当场不成立——`core/tts` 与 `core/stream` 本来就用 `http.Client` 调云引擎与 B 站 web 接口。改为「core 不得起服务、不得引 websocket、不得反向依赖 backend」，出站 HTTP 客户端明确允许；由 `internal/backend/app/boundary_test.go` 强制。
+2. **页面占根与兜底接入路径的冲突**：`[[clients]].path` 允许配成 `/`（现有配置与 e2e 都这么配），而 ServeMux 不允许同一个 pattern 注册两次（原实现会直接 panic）。改为「先收集再注册」并在冲突时合成分流：WebSocket 升级走接入端、其余走页面（`server.dispatchRoot`）。
+
+### 执行中发现并修掉的真问题
+
+- `model_dict.json` 是外部文件，里面的 URL 带原项目前缀 `/live2d-models/`；透出去会让页面 404、模型加载失败（e2e 浏览器检查抓到）。前缀收敛为 `modelsPrefix`，读 dict 时重写。
+- e2e 浏览器脚本的 `.catch` 回调跑在 Node 上下文里读 `document`，一直用 `ReferenceError` 掩盖着真实错误信息。
+- `scripts/e2e` 与文档里的路径、`/web/?autostart=1`（漏改会让推流画面 404）、登录页链接同批更新。
+
+### 仍未决（第二批接口细节）
+
+推流从「随进程起停」改为可启停生命周期对象的边界、模型切换是否需要重建 catalog 与表情词表、TTS 试听是否绕过播报队列的冷却与抢占、记忆删除在 JSON Lines 追加式存储上的语义（重写文件 vs 墓碑标记）。
