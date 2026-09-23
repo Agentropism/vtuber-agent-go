@@ -318,7 +318,7 @@ func TestWebHandlerServesPage(t *testing.T) {
 }
 
 // model_dict.json 是外部文件，里面的 URL 带着原项目的挂载前缀（/live2d-models/）。
-// 直接把它的 URL 透出去，页面就会去请求本服务没有的路径、模型加载失败（e2e 抓到过）。
+// 直接把它的 URL 透出去，页面就会去请求本服务没有的路径、模型加载失败（回归：曾漏掉这一层）。
 func TestReadModelDictNormalizesURLPrefix(t *testing.T) {
 	dir := t.TempDir()
 	dictPath := filepath.Join(dir, "model_dict.json")

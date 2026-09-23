@@ -98,6 +98,32 @@ func loadCatalog(dictPath, modelsDir, want string) (modelEntry, *emotion.Map, er
 	return entry, emotion.Default(), nil
 }
 
+// AvailableModels 列出当前配置下可用的模型名（只读：不装配、不写日志）。
+//
+// 与 loadCatalog 走同一套来源选择：优先 model_dict.json，读不到再扫模型目录。
+// doctor 用它回答「模型配得对不对」，从而不必在启动路径之外再写一份扫描规则。
+func AvailableModels(modelsDir, dictPath string) ([]string, error) {
+	if entries, err := readModelDict(dictPath); err == nil && len(entries) > 0 {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name)
+		}
+		return names, nil
+	}
+
+	entries, err := scanModels(modelsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name)
+	}
+
+	return names, nil
+}
+
 // readModelDict 读取 model_dict.json；路径为空或文件不存在时返回空。
 func readModelDict(dictPath string) ([]modelEntry, error) {
 	if strings.TrimSpace(dictPath) == "" {

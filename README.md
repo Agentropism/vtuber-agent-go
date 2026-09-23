@@ -15,16 +15,18 @@ core（业务与领域能力，不认 HTTP/WS）与 backend（接入、API、前
 ```bash
 go generate ./...                  # 同步 frontend/ 的前端资源进 embed 包（改过页面必跑）
 go build ./cmd/vtuber-agent-go/   # 编译
-cp config.toml.example config.toml # 配置（含凭据，不进版本控制）
-./vtuber-agent-go                 # 运行；config.toml 与 characters/ 需在当前目录
+./vtuber-agent-go config init     # 生成 config.toml（已存在时加 --force 才覆盖）
+./vtuber-agent-go doctor         # 离线自检：配置、角色、目录、端口、外部命令、凭据、前端资源
+./vtuber-agent-go run            # 运行；config.toml 与 characters/ 需在当前目录
 xdg-open http://127.0.0.1:6199/
 ```
+
+裸跑（不带子命令）只打印帮助并以 1 退出；子命令与 `--json` 字段名见 [`docs/CLI.md`](docs/CLI.md)。
 
 验证：
 
 ```bash
 go generate ./... && gofmt -l . && go build ./... && go vet ./... && go test ./...
-scripts/e2e/run.sh                # 端到端冒烟（真二进制 + 假 LLM/假 TTS + 真 WS 客户端，不需要真实凭据）
 ```
 
 ## 目录
@@ -35,7 +37,7 @@ internal/core/          业务与领域能力：shared / config / logger / agent
 internal/backend/       传输与接入：app（装配）/ api（对前端的 REST 接口）/ server（WS 接入与 Action 写回）/ web（页面与模型托管、播报 Sink）
 frontend/               前端工程源码（页面 + libs）；go generate 同步进 internal/backend/web/assets/（产物 gitignore）
 characters/            角色资产（人设 + Live2D 模型映射）
-scripts/e2e/           端到端冒烟脚本
+scripts/               go generate 用的构建脚本（前端资源同步）
 docs/                  契约文档；docs/archive/ 为归档文档；docs/agents/ 为协作流程定义
 ```
 
@@ -48,6 +50,7 @@ docs/                  契约文档；docs/archive/ 为归档文档；docs/agent
 | [`docs/CLIENT_INTEGRATION.md`](docs/CLIENT_INTEGRATION.md) | 接入客户端如何连上来、上报什么 |
 | [`docs/MEMORY_API.md`](docs/MEMORY_API.md) | 长期记忆的存储格式（JSONL + 墓碑）、ID 语义与召回打分 |
 | [`docs/BILIBILI_INGEST.md`](docs/BILIBILI_INGEST.md) | B 站上报端的接入要求与验收清单 |
+| [`docs/CLI.md`](docs/CLI.md) | 命令行契约（子命令、参数、退出码、`--json` 字段名） |
 
 历史文档（旧配置迁移、切换预案、已完成的改造计划）在 `docs/archive/`；`docs/archive/go-rewrite/artifacts/` 里的
 TTS 引擎与 Live2D 技术栈调研仍可复用。

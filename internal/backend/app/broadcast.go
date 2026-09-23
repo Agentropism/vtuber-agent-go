@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/web"
@@ -139,6 +140,25 @@ func buildTTSEngine(cfg *config.Config, name string) (tts.Engine, error) {
 			name,
 		)
 	}
+}
+
+// CheckTTSEngines 校验 [tts].engines：引擎名认不认识、按真实构造函数建不建得起来。
+//
+// 与装配走同一个 buildTTSEngine，所以它报的就是启动时会报的问题；doctor 拿它把
+// 「TTS 配错了」提前到启动之前——不联网，也不真的去合成。
+func CheckTTSEngines(cfg *config.Config) error {
+	var problems []string
+	for _, name := range cfg.TTS.Engines {
+		if _, err := buildTTSEngine(cfg, name); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "；"))
+	}
+
+	return nil
 }
 
 // wrapEngineError 给引擎构造错误补上引擎名，便于定位是哪一项配置有问题。

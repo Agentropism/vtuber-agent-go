@@ -29,11 +29,13 @@ type App struct {
 
 // Initialize 装配全部组件。
 //
+// configPath 为空时读工作目录的 config.toml（--config 未指定时的默认行为）。
+//
 // 接入端（B 站上报端、QQ 适配端）都是外部进程，经 WebSocket 接入；这里不启动后台任务。
-func Initialize() (*App, error) {
+func Initialize(configPath string) (*App, error) {
 	started := time.Now()
 
-	cfg, err := config.ProvideConfig()
+	cfg, err := config.ProvideConfigFrom(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -119,8 +121,14 @@ func Initialize() (*App, error) {
 		ttsPreview = provideTTSPreview(cfg)
 	}
 
+	// 配置只读接口每次请求重读盘（运行时改配置立刻能看到），路径与装配时保持一致：
+	// 用了 --config 就不能再退回默认的 config.toml。
+	configSource := func() (*config.Config, error) {
+		return config.ProvideConfigFrom(configPath)
+	}
+
 	apiHandler := &api.Handler{
-		Config:      config.ProvideConfig,
+		Config:      configSource,
 		Speak:       speak,
 		Sessions:    sessions,
 		Memory:      store,

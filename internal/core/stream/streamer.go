@@ -36,7 +36,9 @@ import (
 
 // 默认参数。
 const (
-	defaultFFmpeg     = "ffmpeg"
+	// DefaultFFmpeg 是 [stream].ffmpeg 留空时使用的可执行名；doctor 也读它报「缺什么」，
+	// 免得两边各抄一份字面量后慢慢漂开。
+	DefaultFFmpeg     = "ffmpeg"
 	defaultDisplay    = ":99"
 	defaultWidth      = 1280
 	defaultHeight     = 720
@@ -93,7 +95,7 @@ type Config struct {
 
 func (c Config) withDefaults() Config {
 	if c.FFmpeg == "" {
-		c.FFmpeg = defaultFFmpeg
+		c.FFmpeg = DefaultFFmpeg
 	}
 	if c.Input == "" {
 		c.Input = InputScreen

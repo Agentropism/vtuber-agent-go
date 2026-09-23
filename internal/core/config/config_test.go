@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -144,5 +145,67 @@ turn_timeout = "60 秒"
 
 	if _, err := ProvideConfig(); err == nil {
 		t.Fatal("非法时间段应当报错")
+	}
+}
+
+// --config 走 ProvideConfigFrom：路径要真的被用上，同时相对路径的基准仍是工作目录
+// （配置里写的 characters/、data/ 不会因为配置文件在别处而改变含义）。
+func TestProvideConfigFromExplicitPath(t *testing.T) {
+	dir := t.TempDir()
+	work := t.TempDir()
+
+	configPath := filepath.Join(dir, "custom.toml")
+	if err := os.WriteFile(configPath, []byte(`
+[llm]
+base_url = "https://api.example.com/v1"
+model = "custom-model"
+
+[agent]
+character_file = "characters/mili.toml"
+`), 0o600); err != nil {
+		t.Fatalf("写入临时配置失败: %v", err)
+	}
+
+	t.Chdir(work)
+
+	cfg, err := ProvideConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("读取配置失败: %v", err)
+	}
+	if cfg.LLM.Model != "custom-model" {
+		t.Errorf("没有读到指定路径的配置: %q", cfg.LLM.Model)
+	}
+	// 相对路径按原样保留，由调用方以工作目录为基准解析。
+	if cfg.Agent.CharacterFile != "characters/mili.toml" {
+		t.Errorf("相对路径不应被改写: %q", cfg.Agent.CharacterFile)
+	}
+}
+
+// 空路径回退到默认的 config.toml：显式传空与不传参行为一致。
+func TestProvideConfigFromEmptyPathFallsBackToDefault(t *testing.T) {
+	writeConfig(t, `
+[llm]
+model = "default-path-model"
+`)
+
+	cfg, err := ProvideConfigFrom("")
+	if err != nil {
+		t.Fatalf("读取配置失败: %v", err)
+	}
+	if cfg.LLM.Model != "default-path-model" {
+		t.Errorf("空路径应回退到 ./config.toml，实际 %q", cfg.LLM.Model)
+	}
+}
+
+// 路径不存在时要报出是哪个路径，而不是只说「读配置失败」。
+func TestProvideConfigFromMissingFileNamesThePath(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	_, err := ProvideConfigFrom("nope/missing.toml")
+	if err == nil {
+		t.Fatal("路径不存在时应返回错误")
+	}
+	if !strings.Contains(err.Error(), "nope/missing.toml") {
+		t.Errorf("错误信息应包含路径，实际 %v", err)
 	}
 }

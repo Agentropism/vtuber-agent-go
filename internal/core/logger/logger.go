@@ -40,7 +40,7 @@ func parseLevel(level string) slog.Level {
 }
 
 // 下面是给本项目的薄封装：文案大量是 printf 风格的中文格式串，而 slog 只有结构化形态，
-// 直接调会在上百处散落 fmt.Sprintf。文案保持不变（e2e 与切换判据都在 grep 它们）。
+// 直接调会在上百处散落 fmt.Sprintf。文案保持不变（人工排查与文档里的判据都在 grep 它们）。
 func Debugf(format string, args ...any) { slog.Debug(fmt.Sprintf(format, args...)) }
 func Infof(format string, args ...any)  { slog.Info(fmt.Sprintf(format, args...)) }
 func Warnf(format string, args ...any)  { slog.Warn(fmt.Sprintf(format, args...)) }

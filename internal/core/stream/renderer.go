@@ -18,8 +18,10 @@ import (
 
 // 默认渲染器参数。
 const (
-	defaultXvfb   = "Xvfb"
-	defaultChrome = "google-chrome-stable"
+	// DefaultXvfb / DefaultChrome 是 [stream].xvfb / .chrome 留空时的可执行名；
+	// 与 DefaultFFmpeg 同理，doctor 复用同一份常量。
+	DefaultXvfb   = "Xvfb"
+	DefaultChrome = "google-chrome-stable"
 	// displayXDepth 是虚拟屏色深；24 位足够 x264 用，8 位会掉色。
 	displayXDepth = 24
 	// displayReadyTimeout 是等 X socket 出现的上限。
@@ -80,10 +82,10 @@ func NewRenderer(cfg RendererConfig) (*Renderer, error) {
 		cfg.Display = defaultDisplay
 	}
 	if cfg.Xvfb == "" {
-		cfg.Xvfb = defaultXvfb
+		cfg.Xvfb = DefaultXvfb
 	}
 	if cfg.Chrome == "" {
-		cfg.Chrome = defaultChrome
+		cfg.Chrome = DefaultChrome
 	}
 	if cfg.Width <= 0 {
 		cfg.Width = defaultWidth

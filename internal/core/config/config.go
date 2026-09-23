@@ -163,16 +163,30 @@ type StreamConfig struct {
 // configFileName 是配置文件名：从工作目录读取的 config.toml。
 const configFileName = "config.toml"
 
-// ProvideConfig 每次从磁盘重读 config.toml（允许运行时改配置）。
+// ProvideConfig 每次从磁盘重读默认路径的 config.toml（允许运行时改配置）。
 func ProvideConfig() (*Config, error) {
-	data, err := os.ReadFile(configFileName)
+	return ProvideConfigFrom("")
+}
+
+// ProvideConfigFrom 从指定路径读配置；path 为空时回退到工作目录的 config.toml。
+//
+// 命令行的 --config 走这个入口。需要留意的是：路径只决定配置文件在哪，配置里的相对
+// 路径（characters/、data/ 等）仍以当前工作目录为基准——与 ProvideConfig 语义一致，
+// 也与主程序装配时的行为一致（见 docs/CLI.md）。
+func ProvideConfigFrom(path string) (*Config, error) {
+	name := path
+	if name == "" {
+		name = configFileName
+	}
+
+	data, err := os.ReadFile(name)
 	if err != nil {
-		return nil, fmt.Errorf("读配置 %s: %w", configFileName, err)
+		return nil, fmt.Errorf("读配置 %s: %w", name, err)
 	}
 
 	var cfg Config
 	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("解析配置 %s: %w", configFileName, err)
+		return nil, fmt.Errorf("解析配置 %s: %w", name, err)
 	}
 
 	cfg.applyEnv()
