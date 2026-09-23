@@ -1,0 +1,185 @@
+/* 面板与表格样式：四角刻度线、面板头、表格、键值列表。 */
+
+.panel {
+  position: relative;
+  background-color: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  /* 四角刻度线：8 条细线（每个角一横一竖），position 用背景定位铺开 */
+  background-image:
+    linear-gradient(var(--tick) 0 0),
+    linear-gradient(var(--tick) 0 0),
+    linear-gradient(var(--tick) 0 0),
+    linear-gradient(var(--tick) 0 0),
+    linear-gradient(var(--tick) 0 0),
+    linear-gradient(var(--tick) 0 0),
+    linear-gradient(var(--tick) 0 0),
+    linear-gradient(var(--tick) 0 0);
+  background-repeat: no-repeat;
+  background-size:
+    var(--tick-len) 1px,
+    1px var(--tick-len),
+    var(--tick-len) 1px,
+    1px var(--tick-len),
+    var(--tick-len) 1px,
+    1px var(--tick-len),
+    var(--tick-len) 1px,
+    1px var(--tick-len);
+  background-position:
+    left 7px top 7px,
+    left 7px top 7px,
+    right 7px top 7px,
+    right 7px top 7px,
+    left 7px bottom 7px,
+    left 7px bottom 7px,
+    right 7px bottom 7px,
+    right 7px bottom 7px;
+  animation: panel-in 0.35s ease both;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 16px 0;
+}
+.panel-head h2 {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+.panel-head .panel-hint {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.panel-body {
+  padding: 12px 16px 16px;
+}
+
+/* 表格 */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.table th {
+  text-align: left;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--edge-strong);
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.table td {
+  border-bottom: 1px solid var(--edge);
+  padding: 6px 10px;
+  vertical-align: top;
+}
+.table tbody tr:hover {
+  background: var(--hover);
+}
+.table .table-empty {
+  text-align: center;
+  color: var(--text-faint);
+  padding: 22px 0;
+}
+.table.clickable tbody tr {
+  cursor: pointer;
+}
+.table tr.active {
+  background: var(--accent-soft);
+}
+
+/* 键值列表 */
+.kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  font-size: 12.5px;
+}
+.kv dt {
+  color: var(--text-faint);
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+}
+.kv dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+/* 统计数字块 */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--gap);
+}
+.stat {
+  padding: 10px 12px;
+  background: var(--bg-raise);
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+}
+.stat .stat-label {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.stat .stat-value {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  line-height: 1.3;
+  color: var(--text);
+}
+.stat .stat-value.accent {
+  color: var(--accent);
+}
+.stat .stat-value.signal {
+  color: var(--signal);
+}
+.stat .stat-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* 未启用态 / 空态 */
+.empty-state {
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--text-dim);
+}
+.empty-state .empty-title {
+  font-family: var(--font-display);
+  letter-spacing: 0.06em;
+  color: var(--signal);
+  margin-bottom: 4px;
+}
+.empty-state .empty-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* 详情抽屉式区域 */
+.detail {
+  border-top: 1px solid var(--edge);
+  margin-top: 12px;
+  padding-top: 12px;
+}
