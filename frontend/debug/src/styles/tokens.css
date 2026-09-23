@@ -1,0 +1,124 @@
+/* 设计令牌：导播中控台（Broadcast Control Desk）。
+   默认黑夜模式；白天模式由 html[data-theme='light'] 覆盖（切换逻辑见 lib/theme.ts）。
+   主色与舞台页同源（#7fd1ff），白天模式换成同色系的深色以保证白底对比度。 */
+
+/* 自托管字体（latin 子集，见 public/fonts/；中文回退系统字体） */
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/debug/fonts/chakra-petch-400.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/debug/fonts/chakra-petch-500.woff2') format('woff2');
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Chakra Petch';
+  src: url('/debug/fonts/chakra-petch-600.woff2') format('woff2');
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/debug/fonts/jetbrains-mono.woff2') format('woff2');
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* 底色与层次 */
+  --bg: #080a0f;
+  --bg-raise: #0b0e15;
+  --panel: #10141c;
+  --panel-soft: #141924;
+  --edge: rgba(255, 255, 255, 0.06);
+  --edge-strong: rgba(255, 255, 255, 0.12);
+
+  /* 文字 */
+  --text: #dbe3f0;
+  --text-dim: #8b93a7;
+  --text-faint: #5b6273;
+
+  /* 主色与信号色 */
+  --accent: #7fd1ff;
+  --accent-soft: rgba(127, 209, 255, 0.14);
+  --signal: #ffb454;
+  --signal-soft: rgba(255, 180, 84, 0.14);
+  --ok: #7ee0a8;
+  --ok-soft: rgba(126, 224, 168, 0.14);
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.14);
+
+  /* 强调色的描边（徽标/按钮边框） */
+  --accent-line: rgba(127, 209, 255, 0.4);
+  --signal-line: rgba(255, 180, 84, 0.4);
+  --ok-line: rgba(126, 224, 168, 0.4);
+  --danger-line: rgba(255, 107, 107, 0.38);
+
+  /* 交互与细节 */
+  --hover: rgba(127, 209, 255, 0.05);
+  --scroll-thumb: #1d2430;
+  --scroll-thumb-hover: #2a3342;
+  --led-idle: #333b49;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --noise-opacity: 0.05;
+
+  /* 字体族 */
+  --font-display: 'Chakra Petch', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, 'Microsoft YaHei', monospace;
+  --font-cn: 'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif;
+
+  /* 结构 */
+  --radius: 6px;
+  --sidenav-w: 208px;
+  --strip-h: 46px;
+  --gap: 14px;
+
+  /* 刻度线（面板四角） */
+  --tick: rgba(127, 209, 255, 0.55);
+  --tick-len: 9px;
+}
+
+/* 白天模式：整体提亮、强调色加深，保证白底上的可读性 */
+html[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #eef1f6;
+  --bg-raise: #e7ebf2;
+  --panel: #ffffff;
+  --panel-soft: #f3f6fa;
+  --edge: rgba(24, 34, 52, 0.09);
+  --edge-strong: rgba(24, 34, 52, 0.18);
+
+  --text: #1d2635;
+  --text-dim: #566078;
+  --text-faint: #8a93a6;
+
+  --accent: #0e7cb5;
+  --accent-soft: rgba(14, 124, 181, 0.12);
+  --signal: #b8730f;
+  --signal-soft: rgba(184, 115, 15, 0.12);
+  --ok: #16835a;
+  --ok-soft: rgba(22, 131, 90, 0.12);
+  --danger: #cc3535;
+  --danger-soft: rgba(204, 53, 53, 0.1);
+
+  --accent-line: rgba(14, 124, 181, 0.45);
+  --signal-line: rgba(184, 115, 15, 0.45);
+  --ok-line: rgba(22, 131, 90, 0.45);
+  --danger-line: rgba(204, 53, 53, 0.42);
+
+  --hover: rgba(14, 124, 181, 0.06);
+  --scroll-thumb: #c4ccd9;
+  --scroll-thumb-hover: #aab4c5;
+  --led-idle: #c2c9d6;
+  --shadow: 0 8px 24px rgba(30, 41, 59, 0.16);
+  --noise-opacity: 0.03;
+
+  --tick: rgba(14, 124, 181, 0.5);
+}

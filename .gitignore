@@ -20,3 +20,7 @@ config.toml.*.bak
 # 前端源码产物：由 go generate 从顶层 frontend/ 同步（单一事实源），只跟踪占位文件。
 /internal/backend/web/assets/*
 !/internal/backend/web/assets/.gitkeep
+
+# 调试台（frontend/debug）的依赖与构建产物：不提交，go generate 时重建。
+frontend/debug/node_modules/
+frontend/debug/dist/

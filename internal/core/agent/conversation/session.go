@@ -149,6 +149,30 @@ type Memory interface {
 	Remember(entry MemoryEntry)
 }
 
+// ArchiveRecord 是一轮要归档的对话：谁在哪个渠道说了什么、怎么回的。
+type ArchiveRecord struct {
+	Time        time.Time
+	Platform    string
+	ChannelID   string
+	ChannelType string
+	UserID      string
+	UserName    string
+	EventKind   event.Kind
+	Text        string
+	Reply       string
+}
+
+// Archive 是会话层需要的归档能力（接口归调用方所有）。
+//
+// 归档是只增不删的完整流水，与可删改的长期记忆（Memory）是两件事：
+// 会话每轮结束把对话写进归档；渠道首次创建时从归档恢复最近若干轮上下文。
+type Archive interface {
+	// RecordDialogue 归档一轮对话；实现不应长时间阻塞。
+	RecordDialogue(record ArchiveRecord)
+	// RecentDialogues 返回某渠道最近 limit 轮对话，按时间正序（旧→新）。
+	RecentDialogues(channelID string, limit int) []ArchiveRecord
+}
+
 // SessionsConfig 是构造会话管理器的参数。
 type SessionsConfig struct {
 	LLM           ChatClient
@@ -164,6 +188,11 @@ type SessionsConfig struct {
 
 	Memory      Memory // 长期记忆；为空时不做召回与记录
 	RecallLimit int    // 每轮召回条数，<=0 取默认 5
+
+	// Archive 记录每轮对话并在会话创建时恢复上下文；为空时不归档也不恢复。
+	Archive Archive
+	// RehydrateTurns 是渠道首次创建时从归档恢复的对话轮数，<=0 不恢复。
+	RehydrateTurns int
 
 	// IdleSpeakInterval > 0 时，渠道静默超过该时长就主动说一句（最低优先级，任何播报都能打断它）。
 	IdleSpeakInterval time.Duration
@@ -277,6 +306,7 @@ func (s *Sessions) sessionFor(channelID string) (*session, error) {
 		MaxToolRounds:    s.cfg.MaxToolRounds,
 		MaxHistoryTurns:  s.cfg.MaxHistoryTurns,
 		MaxHistoryTokens: s.cfg.MaxHistoryTokens,
+		InitialHistory:   s.initialHistory(channelID),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("创建渠道 %s 的会话: %w", channelID, err)
@@ -379,6 +409,7 @@ func (s *session) turn(event InboundEvent) {
 
 	s.send(event, text)
 	s.remember(event, text)
+	s.archive(event, text)
 }
 
 // recallHint 把召回的历史拼成一段系统提示；没有记忆或没有命中时返回空串。
@@ -439,8 +470,57 @@ func memoryWeight(kind event.Kind) int {
 	}
 }
 
-// enqueue 把一句待播报文本交给统一播报队列；未注入队列时跳过，只做文本下行。
+// archive 把这一轮对话写进归档；归档是只增不删的流水，失败只记日志不打断回复。
+func (s *session) archive(event InboundEvent, reply string) {
+	if s.cfg.Archive == nil {
+		return
+	}
+
+	s.cfg.Archive.RecordDialogue(ArchiveRecord{
+		Time:        time.Now(),
+		Platform:    event.Platform,
+		ChannelID:   event.ChannelID,
+		ChannelType: event.ChannelType,
+		UserID:      event.UserID,
+		UserName:    event.UserName,
+		EventKind:   event.Kind,
+		Text:        event.Text,
+		Reply:       reply,
+	})
+}
+
+// initialHistory 从归档恢复某渠道最近的对话，转成 user/assistant 消息序列。
 //
+// 只做历史，不触发回复：恢复的消息与正常轮次写进历史的内容完全同构
+// （用户原文 + 助手回复），模型看到的上下文与进程没重启过一样。
+func (s *Sessions) initialHistory(channelID string) []llm.Message {
+	if s.cfg.Archive == nil || s.cfg.RehydrateTurns <= 0 {
+		return nil
+	}
+
+	records := s.cfg.Archive.RecentDialogues(channelID, s.cfg.RehydrateTurns)
+	if len(records) == 0 {
+		return nil
+	}
+
+	messages := make([]llm.Message, 0, len(records)*2)
+	for _, record := range records {
+		if strings.TrimSpace(record.Text) == "" {
+			continue
+		}
+		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: record.Text})
+		if strings.TrimSpace(record.Reply) != "" {
+			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: record.Reply})
+		}
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+
+	logger.Infof("渠道 %s 从归档恢复 %d 条历史消息", channelID, len(messages))
+
+	return messages
+} // enqueue 把一句待播报文本交给统一播报队列；未注入队列时跳过，只做文本下行。
 // 优先级取自事件种类：SC > 礼物/大航海 > 弹幕与群消息。
 //
 // 同时处理表情标签：模型输出里的 [joy] 这类标签在这里被摘下来写进 Item.Emotion，

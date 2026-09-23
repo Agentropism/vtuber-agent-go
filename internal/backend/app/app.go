@@ -10,6 +10,7 @@ import (
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/api"
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/server"
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/web"
+	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/archive"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/broadcast"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/conversation"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/conversation/llm"
@@ -85,17 +86,29 @@ func Initialize() (*App, error) {
 		return nil, err
 	}
 
+	// 对话归档：只增不删的完整流水 + 重启恢复上下文；未配置目录时为 nil
+	archiveStore, err := provideArchive(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	// 工具注册层：记忆检索与状态查询，交给会话层的工具调用循环驱动
 	registry := provideTools(cfg, store, front, queue, started)
 
 	// 事件终端改为进程内 agent 会话：上传管线只负责去重、敏感词与背压，
 	// 出口是本地方法调用，不再连远端 WebSocket。
-	sessions, err := provideSessions(cfg, character, queue, front, store, registry)
+	sessions, err := provideSessions(cfg, character, queue, front, store, registry, archiveStore)
 	if err != nil {
 		return nil, err
 	}
 	if sessions != nil {
-		upload.SetHandler(sessions.Handle)
+		handler := sessions.Handle
+		// 不产生回复的事件（点赞/进房/开播下播/通知）由包装器归档后再交给会话层；
+		// 会话层只处理需要回复的事件，两边各记各的，不重不漏
+		if archiveStore != nil {
+			handler = archiveUploadHandler(archiveStore, handler)
+		}
+		upload.SetHandler(handler)
 	}
 
 	// 前端接口层：配置只读、播报注入、会话读写、运行状态。
@@ -111,6 +124,8 @@ func Initialize() (*App, error) {
 		Speak:       speak,
 		Sessions:    sessions,
 		Memory:      store,
+		Chats:       archiveStore,
+		Logs:        logger.Recent,
 		Tools:       registry,
 		Queue:       queue,
 		Clients:     server.ConnectedPlatforms,
@@ -138,6 +153,8 @@ func Initialize() (*App, error) {
 	Register()
 
 	routes := frontendRoutes(front)
+	// 调试台：页面能看到日志与归档，套本机访问限制（API 本身按契约仍不鉴权）
+	routes = append(routes, server.Route{Pattern: "/debug/", Handler: localOnly(web.DebugHandler())})
 	routes = append(routes, apiHandler.Routes()...)
 	if login != nil {
 		routes = append(routes, login.routes()...)
@@ -212,6 +229,7 @@ func provideSessions(
 	front *web.Frontend,
 	store *memory.Store,
 	registry *tool.Registry,
+	archiveStore *archive.Store,
 ) (*conversation.Sessions, error) {
 	if cfg.LLM.BaseURL == "" || cfg.LLM.Model == "" {
 		logger.Warn("未配置 [llm] 的 base_url / model，跳过 agent 会话初始化，事件不会被处理")
@@ -255,6 +273,10 @@ func provideSessions(
 	if store != nil {
 		sessionsCfg.Memory = memoryAdapter{store: store}
 		sessionsCfg.RecallLimit = cfg.Agent.RecallLimit
+	}
+	if archiveStore != nil {
+		sessionsCfg.Archive = archiveAdapter{store: archiveStore}
+		sessionsCfg.RehydrateTurns = cfg.Agent.HistoryRehydrateTurns
 	}
 	if registry != nil {
 		sessionsCfg.Tools = registry.Tools()

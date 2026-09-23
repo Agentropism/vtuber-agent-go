@@ -14,9 +14,19 @@ const textEl = document.getElementById('text');
 const gateEl = document.getElementById('gate');
 const gateTitleEl = document.getElementById('gate-title');
 const startButton = document.getElementById('start');
+const composerEl = document.getElementById('composer');
+const inputEl = document.getElementById('message-input');
+const sendButton = document.getElementById('send');
 
 const RECONNECT_MIN = 1000;
 const RECONNECT_MAX = 15000;
+
+// 本地文本输入的目标渠道与身份：可用 URL 参数覆盖（?channel=group_123456&name=小明）。
+// 渠道号前缀决定平台（room_ → B站 / group_ → QQ），默认用本地直播间，不打扰任何真实平台。
+const query = new URLSearchParams(location.search);
+const CHANNEL = query.get('channel') || 'room_local';
+const USER_NAME = query.get('name') || '本地观众';
+const LOCAL_USER_ID = 'local';
 
 let app = null;
 let model = null;
@@ -134,6 +144,44 @@ function showCaption(speaker, text) {
   speakerEl.textContent = speaker ? `${speaker}：` : '';
   textEl.textContent = text;
   captionEl.classList.add('on');
+}
+
+// ---- 本地文本输入 ----
+// 以观众身份发一条消息：POST /api/sessions/<渠道>/messages。它与平台事件走同一条上传管线
+// （去重、敏感词、背压一个不落），因此会进会话、会生成回复、会写长期记忆；
+// 回复经播报队列回来，由上面的 speak 流程出声与做表情。
+let sending = false;
+
+async function sendLocalMessage() {
+  const text = inputEl.value.trim();
+  if (!text || sending) return;
+
+  sending = true;
+  sendButton.disabled = true;
+  try {
+    const resp = await fetch(`/api/sessions/${encodeURIComponent(CHANNEL)}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: LOCAL_USER_ID, user_name: USER_NAME, text: text }),
+    });
+    if (!resp.ok) {
+      let detail = `HTTP ${resp.status}`;
+      try {
+        const body = await resp.json();
+        if (body && body.error) detail = body.error;
+      } catch (err) {
+        // 响应体不是 JSON 时保留状态码
+      }
+      throw new Error(detail);
+    }
+    inputEl.value = '';
+  } catch (err) {
+    setStatus(`发送失败：${err.message}`, 'err');
+  } finally {
+    sending = false;
+    sendButton.disabled = false;
+    inputEl.focus();
+  }
 }
 
 async function createStage() {
@@ -330,10 +378,18 @@ function connect() {
 async function main() {
   await createStage();
 
+  inputEl.placeholder = `对 ${CHANNEL} 说点什么…（回车发送）`;
+  composerEl.addEventListener('submit', (event) => {
+    event.preventDefault();
+    sendLocalMessage();
+  });
+
   // 无人值守推流时没有人能点页面（Chrome 以 --autoplay-policy=no-user-gesture-required
   // 启动），用 ?autostart=1 直接连；正常打开仍然等一次点击，
   // 免得把「开始播报之前」的内容静默丢掉。
-  if (new URLSearchParams(location.search).get('autostart') === '1') {
+  if (query.get('autostart') === '1') {
+    // 推流时页面就是画面：输入框不入镜，字幕放回底部
+    document.body.classList.add('autostart');
     gateEl.classList.add('off');
     connect();
     return;
@@ -342,6 +398,7 @@ async function main() {
   // 点击之后才连服务端，这样开始播报之前的内容不会被静默丢掉。
   startButton.addEventListener('click', () => {
     gateEl.classList.add('off');
+    composerEl.classList.remove('off');
     setStatus('连接中…');
     connect();
   });

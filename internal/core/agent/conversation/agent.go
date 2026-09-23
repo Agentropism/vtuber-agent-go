@@ -61,6 +61,10 @@ type AgentConfig struct {
 	// 历史裁剪上限，<=0 取默认值（12 轮 / 4000 token）。
 	MaxHistoryTurns  int
 	MaxHistoryTokens int
+
+	// InitialHistory 是会话创建时预置的历史（例如从归档恢复的上下文），
+	// 只做历史，不触发回复；会被历史裁剪规则截断。
+	InitialHistory []llm.Message
 }
 
 // Agent 是带对话历史的会话智能体，对应原 Python 实现的 BasicMemoryAgent。
@@ -132,7 +136,20 @@ func NewAgent(cfg AgentConfig) (*Agent, error) {
 		interruptMode: mode,
 		maxToolRounds: rounds,
 		limits:        limits,
+		history:       seedHistory(cfg.InitialHistory, limits),
 	}, nil
+}
+
+// seedHistory 应用预置历史并裁剪到上限。
+func seedHistory(initial []llm.Message, limits HistoryLimits) []llm.Message {
+	if len(initial) == 0 {
+		return nil
+	}
+
+	out := make([]llm.Message, len(initial))
+	copy(out, initial)
+
+	return TrimHistory(out, limits)
 }
 
 // Chat 处理一轮用户输入，把回复文本以增量形式回调 onText。

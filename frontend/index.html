@@ -16,7 +16,7 @@
   #stage { position: fixed; inset: 0; display: block; }
 
   #caption {
-    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
     width: min(880px, calc(100vw - 48px));
     padding: 14px 20px; border-radius: 14px;
     background: rgba(12, 16, 24, .72); backdrop-filter: blur(8px);
@@ -27,6 +27,31 @@
   }
   #caption.on { opacity: 1; }
   #speaker { color: #7fd1ff; font-weight: 600; white-space: nowrap; }
+
+  /* 无人值守推流（?autostart=1）时页面就是画面，输入框不该入镜，字幕也放回底部 */
+  body.autostart #caption { bottom: 24px; }
+
+  /* 本地文本输入：以观众身份把消息投进会话（POST /api/sessions/<渠道>/messages） */
+  #composer {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    width: min(880px, calc(100vw - 48px));
+    display: flex; gap: 8px; z-index: 5;
+  }
+  #composer.off { display: none; }
+  #message-input {
+    flex: 1; min-width: 0; padding: 12px 18px; font-size: 15px;
+    color: #e8ecf3; background: rgba(12, 16, 24, .78); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, .1); border-radius: 999px; outline: none;
+  }
+  #message-input:focus { border-color: rgba(127, 209, 255, .55); }
+  #message-input::placeholder { color: #6b7a91; }
+  #send {
+    padding: 0 24px; font-size: 15px; font-weight: 600; cursor: pointer;
+    color: #0b0e14; background: #7fd1ff; border: 0; border-radius: 999px;
+    transition: background .12s ease;
+  }
+  #send:hover { background: #a5e0ff; }
+  #send:disabled { opacity: .45; cursor: default; }
 
   #status {
     position: fixed; right: 14px; top: 12px;
@@ -59,6 +84,11 @@
   <canvas id="stage"></canvas>
   <div id="caption"><span id="speaker"></span><span id="text"></span></div>
   <div id="status">未开始</div>
+
+  <form id="composer" class="off" autocomplete="off">
+    <input id="message-input" type="text" maxlength="500" placeholder="说点什么…（回车发送）">
+    <button id="send" type="submit">发送</button>
+  </form>
 
   <div id="gate">
     <h1 id="gate-title">SyAgent</h1>

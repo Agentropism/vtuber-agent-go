@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"strconv"
@@ -24,8 +23,8 @@ import (
 // 扫码登录：浏览器打开 /login/ 扫一张二维码，登录态落到 cookie 文件里，
 // 推流与开播接口直接复用（见 stream.go 的 cookie 来源顺序）。
 //
-// 三个端点全部**只允许本机访问**（回环地址）：二维码一被扫就绑定账号，
-// 把开播权限暴露到局域网没有任何理由。
+// 三个端点全部**只允许本机访问**（回环地址或 WSL 宿主机地址，见 localOnly）：
+// 二维码一被扫就绑定账号，把开播权限暴露到局域网没有任何理由。
 const (
 	loginPagePattern     = "/login/"
 	loginQRCodePattern   = "/login/qrcode.png"
@@ -112,11 +111,11 @@ func (s *loginService) Cookie() string {
 // routes 返回登录页与它的两个数据端点。
 func (s *loginService) routes() []server.Route {
 	return []server.Route{
-		{Pattern: loginPagePattern, Handler: loopbackOnly(loginPageHandler())},
-		{Pattern: loginQRCodePattern, Handler: loopbackOnly(s.qrcodeHandler())},
-		{Pattern: loginStatusPattern, Handler: loopbackOnly(s.statusHandler())},
-		{Pattern: loginVerifyPattern, Handler: loopbackOnly(s.verifyHandler())},
-		{Pattern: loginVerifyQRPattern, Handler: loopbackOnly(s.verifyQRHandler())},
+		{Pattern: loginPagePattern, Handler: localOnly(loginPageHandler())},
+		{Pattern: loginQRCodePattern, Handler: localOnly(s.qrcodeHandler())},
+		{Pattern: loginStatusPattern, Handler: localOnly(s.statusHandler())},
+		{Pattern: loginVerifyPattern, Handler: localOnly(s.verifyHandler())},
+		{Pattern: loginVerifyQRPattern, Handler: localOnly(s.verifyQRHandler())},
 	}
 }
 
@@ -231,31 +230,6 @@ func writeLoginStatus(w http.ResponseWriter, payload loginStatusPayload) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(payload)
-}
-
-// loopbackOnly 只放行本机请求。
-//
-// 这台机器上的浏览器访问 127.0.0.1 就能用；局域网里能访问到就意味着别人能拿
-// 你的账号开播，所以直接拒掉。RemoteAddr 是 TCP 对端地址，伪造不了。
-func loopbackOnly(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isLoopback(r.RemoteAddr) {
-			http.Error(w, "登录页只允许本机访问", http.StatusForbidden)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-func isLoopback(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		host = remoteAddr
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-
-	return ip != nil && ip.IsLoopback()
 }
 
 // loginPageHandler 出登录页。页面轮询 /login/status 并把状态写在二维码下面。

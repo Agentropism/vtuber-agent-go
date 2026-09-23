@@ -34,6 +34,11 @@ history_max_tokens = 4000
 memory_file = "data/memory.jsonl"
 # 每轮对话召回的条数，0 = 使用默认值 5
 recall_limit = 5
+# 对话归档目录（JSON Lines，只增不删，按平台/渠道分类）；为空表示不启用归档
+#   data/chats/local/room_local.jsonl · data/chats/qq/group_*.jsonl · data/chats/bilibili/room_*.jsonl
+archive_dir = "data/chats"
+# 渠道首次创建时从归档恢复的对话轮数（重启后接得上上文），0 = 不恢复
+history_rehydrate_turns = 12
 # 打开工具调用：记忆检索（memory_search）与状态查询（bot_status）
 enable_tools = true
 # 渠道静默超过该时长就主动说一句，例如 "5m"；"0s" = 不主动发言

@@ -272,6 +272,25 @@ func (f *Frontend) FaviconHandler() http.Handler {
 	})
 }
 
+// debugPrefix 是调试台的挂载路径；源码在 frontend/debug，构建产物嵌入 assets/debug。
+const debugPrefix = "/debug/"
+
+// DebugHandler 提供内置的调试台页面。
+//
+// 与舞台页同源（嵌入资源），但不依赖 Frontend 是否启用：调试台看的是网关自身，
+// 前端没开时模型面板给 503 即可，页面本身不该消失。路由挂载时套本机访问限制。
+func DebugHandler() http.Handler {
+	sub, err := fs.Sub(webAssets, "assets/debug")
+	if err != nil {
+		logger.Errorf("调试台资源不可用: %v", err)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "调试台资源不可用", http.StatusInternalServerError)
+		})
+	}
+
+	return http.StripPrefix(debugPrefix, http.FileServer(http.FS(sub)))
+}
+
 // helloMessage 组装 hello 下行消息：新连接与模型热切换后共用同一份。
 func (f *Frontend) helloMessage() message {
 	return message{

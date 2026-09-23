@@ -360,7 +360,104 @@ POST /api/stream
 | 400 | `action` 不是 `start`/`stop` |
 | 503 | 未启用 `[stream]` |
 
-## 10. 路径迁移（已完成）
+## 10. 日志
+
+```http
+GET /api/logs?limit=200&level=warn
+```
+
+返回进程内最近日志的环形缓冲快照（容量 500 条，新的在前）。
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `limit` | 200 | 返回条数；上限为缓冲容量 |
+| `level` | 不过滤 | 「不低于该级别」的过滤：`debug` / `info` / `warn` / `error`；未知取值视为不过滤 |
+
+```json
+{
+  "count": 2,
+  "entries": [
+    {"time": "2026-09-21T22:40:38.016+08:00", "level": "WARN", "msg": "TTS 引擎 edge_tts 合成失败，降级到下一个"},
+    {"time": "2026-09-21T22:40:36.804+08:00", "level": "INFO", "msg": "对话归档已启用: data/chats"}
+  ]
+}
+```
+
+| 状态码 | 含义 |
+| --- | --- |
+| 200 | 快照（可能为空数组） |
+| 400 | `limit` 不是正整数 |
+
+## 11. 对话归档
+
+只增不删的完整对话与事件流水，按平台/渠道分类存储（存储格式与恢复机制见
+`docs/CHAT_ARCHIVE.md`）。未配置 `[agent].archive_dir` 时整组返回 `503 archive disabled`。
+
+### 11.1 分类与渠道摘要
+
+```http
+GET /api/chats
+```
+
+```json
+{
+  "platforms": [
+    {"platform": "local", "channels": [{"channel_id": "room_local", "count": 24, "last_time": "...", "last_text": "..."}]},
+    {"platform": "qq", "channels": [{"channel_id": "group_123456", "count": 132, "last_time": "...", "last_text": "..."}]}
+  ]
+}
+```
+
+分类规则：`room_local` 精确匹配归 `local`；`group_*` 归 `qq`；`room_*` 归 `bilibili`；
+其余用事件里的平台名。渠道号为空的 QQ 通知归入 `qq/_notices`。
+
+### 11.2 分页读取记录
+
+```http
+GET /api/chats/{platform}/{channel}?limit=100&before=2026-09-21T23:00:00%2B08:00
+```
+
+新的在前。`before` 是 RFC3339 时间（**`+` 必须 URL 编码为 `%2B`**），用于「加载更早」翻页。
+
+```json
+{
+  "platform": "qq", "channel_id": "group_123456", "count": 2,
+  "records": [
+    {"kind": "dialogue", "time": "...", "platform": "qq", "channel_id": "group_123456",
+     "channel_type": "group", "user_id": "20002", "user_name": "小明",
+     "event_kind": "group_message", "text": "在吗", "reply": "在的～"}
+  ]
+}
+```
+
+| 状态码 | 含义 |
+| --- | --- |
+| 200 | 记录列表（可能为空） |
+| 400 | `limit` / `before` 非法 |
+| 404 | 该渠道没有归档文件 |
+
+### 11.3 导出下载
+
+```http
+GET /api/chats/export?platform=qq&channel=group_123456&format=md
+```
+
+`format` 取 `jsonl`（默认）或 `md`；`channel` 省略时导出整个分类。响应带
+`Content-Disposition: attachment`，浏览器直接下载。
+
+| 状态码 | 含义 |
+| --- | --- |
+| 200 | 文件内容（jsonl 或 markdown） |
+| 400 | `platform` 为空或 `format` 不支持 |
+| 404 | 指定渠道（或整个分类）没有内容 |
+
+## 12. 调试台
+
+调试台页面挂在 `/debug/`，与 `/login/` 一样**只允许本机访问**：回环地址，或 WSL 虚拟网络里
+宿主机（Windows 侧浏览器）的地址；其余来源回 `403`。**`/api/*` 本身仍不鉴权**（见文首约定），
+所以不要为了调试台把 `[server].addr` 绑到 `0.0.0.0`。
+
+## 13. 路径迁移（已完成）
 
 | 旧路径 | 现在 | 说明 |
 | --- | --- | --- |

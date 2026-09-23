@@ -44,6 +44,11 @@ type Config struct {
 		// RecallLimit 是每轮召回的历史条数，0 表示用默认值 5。
 		RecallLimit int `toml:"recall_limit"`
 
+		// ArchiveDir 是对话归档目录（JSON Lines，按平台/渠道分类），为空表示不启用。
+		ArchiveDir string `toml:"archive_dir"`
+		// HistoryRehydrateTurns 是渠道首次创建时从归档恢复的对话轮数，0 表示不恢复。
+		HistoryRehydrateTurns int `toml:"history_rehydrate_turns"`
+
 		// EnableTools 打开工具调用（记忆检索、状态查询）。
 		EnableTools bool `toml:"enable_tools"`
 		// IdleSpeakInterval > 0 时，渠道静默超过该时长就主动说一句，例如 "5m"。
