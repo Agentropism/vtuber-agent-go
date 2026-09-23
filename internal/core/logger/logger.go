@@ -12,10 +12,13 @@ import (
 // 日志走标准库 slog：不再需要每个包各自持有 logger、再靠 SetLogger 注入——
 // ProvideLogger 里 slog.SetDefault 设一次，全局生效（由 app.Initialize 调用）。
 func ProvideLogger(cfg *config.Config) (*slog.Logger, error) {
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level:     parseLevel(cfg.Log.Level),
-		AddSource: true,
-	})
+	handler := &ringHandler{
+		inner: slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level:     parseLevel(cfg.Log.Level),
+			AddSource: true,
+		}),
+		ring: defaultRing,
+	}
 
 	log := slog.New(handler)
 	slog.SetDefault(log)

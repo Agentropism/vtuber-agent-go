@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Agentropism/vtuber-agent-go/internal/backend/server"
+	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/archive"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/broadcast"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/conversation"
 	"github.com/Agentropism/vtuber-agent-go/internal/core/agent/memory"
@@ -31,6 +32,10 @@ type Handler struct {
 	Sessions *conversation.Sessions
 	// Memory 是长期记忆；nil 表示未配置 [agent].memory_file。
 	Memory *memory.Store
+	// Chats 是对话归档；nil 表示未配置 [agent].archive_dir。
+	Chats *archive.Store
+	// Logs 返回进程内最近的日志；nil 表示未装配（正常装配下始终可用）。
+	Logs func(limit int, level string) []logger.Entry
 	// Tools 是工具注册表；nil 表示未开启 [agent].enable_tools。
 	Tools *tool.Registry
 	// Queue 提供播报队列计数；nil 表示播报链路未装配。
@@ -72,6 +77,10 @@ func (h *Handler) Routes() []server.Route {
 		{Pattern: "GET /api/memory", Handler: http.HandlerFunc(h.handleMemoryList)},
 		{Pattern: "POST /api/memory", Handler: http.HandlerFunc(h.handleMemoryAdd)},
 		{Pattern: "DELETE /api/memory/{id}", Handler: http.HandlerFunc(h.handleMemoryDelete)},
+		{Pattern: "GET /api/chats", Handler: http.HandlerFunc(h.handleChats)},
+		{Pattern: "GET /api/chats/export", Handler: http.HandlerFunc(h.handleChatsExport)},
+		{Pattern: "GET /api/chats/{platform}/{channel}", Handler: http.HandlerFunc(h.handleChatRecords)},
+		{Pattern: "GET /api/logs", Handler: http.HandlerFunc(h.handleLogs)},
 		{Pattern: "GET /api/tools", Handler: http.HandlerFunc(h.handleToolsList)},
 		{Pattern: "POST /api/tools/{name}", Handler: http.HandlerFunc(h.handleToolCall)},
 		{Pattern: "GET /api/models", Handler: http.HandlerFunc(h.handleModels)},
